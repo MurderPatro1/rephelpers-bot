@@ -106,10 +106,11 @@ def full_keyboard(key):
         ],
         [
             InlineKeyboardButton("🏷 Теги", callback_data=f"open_tags|{key}"),
-            InlineKeyboardButton("💬 Комментарии", callback_data=f"open_comments|{key}"),
-        ]
+            InlineKeyboardButton("💬 Комментарии", callback_data=f"comment|{key}"),
+        ],
     ]
     return InlineKeyboardMarkup(keyboard)
+
 
 
 
@@ -120,17 +121,23 @@ TOKEN = "8186874294:AAHlIidQsjqfLPw0MCdGMuuCUKCmWq-rFYE"
 ratings = load_ratings()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+
     await update.message.reply_text(
-        "👋 Привет!\n\n"
-        "Это бот социального рейтинга.\n\n"
-        "📌 Как пользоваться:\n"
-        "• Отправь @username, @канал или ссылку\n"
-        "• Бот создаст карточку рейтинга\n"
-        "• Голосуй кнопками 👍👎\n\n"
+        "👋 Добро пожаловать в бот социального рейтинга\n\n"
+        "📌 Что здесь можно делать:\n"
+        "• Проверять людей, аккаунты и номера телефонов\n"
+        "• Ставить 👍 или 👎\n"
+        "• Добавлять теги и комментарии\n\n"
+        "🧭 Как пользоваться:\n"
+        "1️⃣ Отправь @username, ссылку или номер телефона\n"
+        "2️⃣ Поставь оценку 👍 / 👎\n"
+        "3️⃣ При желании добавь теги и комментарии\n\n"
         "⚠️ Правила:\n"
         "• Один человек — один голос\n"
-        "• Нельзя голосовать за себя\n\n"
-        "👇 Просто отправь объект для оценки"
+        "• Нельзя голосовать за себя\n"
+        "• Комментарии анонимные\n\n"
+        "👇 Просто отправь объект для проверки"
     )
 
 
@@ -299,26 +306,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
-    # 🔴 1. если сейчас пишут комментарий — обрабатываем и ВЫХОДИМ
+    # ЕСЛИ МЫ В РЕЖИМЕ КОММЕНТАРИЯ
     if context.user_data.get("comment_mode"):
         key = context.user_data.get("comment_key")
 
-        ratings[key].setdefault("comments", [])
-        ratings[key]["comments"].append({
-            "text": text
-        })
+        if not key:
+            context.user_data.clear()
+            return
 
+        ratings[key].setdefault("comments", [])
+        ratings[key]["comments"].append(text)
 
         save_ratings(ratings)
 
-        context.user_data["comment_mode"] = False
-        context.user_data["comment_key"] = None
+        # ❗ ВАЖНО — ВЫХОДИМ ИЗ РЕЖИМА
+        context.user_data.clear()
 
-        await update.message.reply_text(
-            "✅ Комментарий добавлен",
-            reply_markup=full_keyboard(key)
-        )
+        await update.message.reply_text("✅ Комментарий добавлен анонимно")
         return
+
 
     # 🔴 2. определяем ТИП объекта и СРАЗУ создаём key
     if is_phone_number(text):
@@ -449,6 +455,51 @@ async def open_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=full_keyboard(key)
     )
 
+async def handle_comment_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not query.data.startswith("comment|"):
+        return
+
+    _, key = query.data.split("|")
+
+    context.user_data["comment_mode"] = True
+    context.user_data["comment_key"] = key
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Отмена", callback_data="cancel_comment")]
+    ])
+
+    await query.edit_message_text(
+        "💬 Напишите комментарий к объекту\n\n"
+        "⚠️ Комментарий будет анонимным",
+        reply_markup=keyboard
+    )
+
+async def handle_cancel_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data != "cancel_comment":
+        return
+
+    key = context.user_data.get("comment_key")
+
+    context.user_data.clear()
+
+    if not key or key not in ratings:
+        await query.edit_message_text("❌ Действие отменено")
+        return
+
+    await query.edit_message_text(
+        f"⭐ Объект:\n{key.replace('custom:', '')}\n\n"
+        f"Рейтинг: {ratings[key]['score']}\n\n"
+        f"🏷 Теги:\n{format_tags(ratings[key].get('tags', {}))}",
+        reply_markup=full_keyboard(key)
+    )
+
+
 
 
 
@@ -465,6 +516,10 @@ def main():
     app.add_handler(CallbackQueryHandler(open_tags, pattern="^open_tags\\|"))
     app.add_handler(CallbackQueryHandler(back_to_rating, pattern="^back\\|"))
     app.add_handler(CallbackQueryHandler(open_comments, pattern="^open_comments\\|"))
+    app.add_handler(CallbackQueryHandler(handle_comment_button, pattern="^comment\\|"))
+    app.add_handler(CallbackQueryHandler(handle_cancel_comment, pattern="^cancel_comment$"))
+
+
 
 
 
@@ -476,5 +531,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
