@@ -1,3 +1,5 @@
+print("BOT STARTING...")
+
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 import json
@@ -475,3 +477,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
