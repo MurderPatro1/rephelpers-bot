@@ -10,9 +10,8 @@ from telegram.ext import MessageHandler, filters
 import re
 
 import os
-from dotenv import load_dotenv
 
-load_dotenv()
+
 TOKEN = os.getenv("BOT_TOKEN")
 
 import logging
@@ -477,4 +476,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
