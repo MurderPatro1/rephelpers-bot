@@ -33,6 +33,20 @@ TAG_EMOJIS = {
 }
 
 
+# ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ПРОВЕРКИ) =====
+
+def is_username(text: str) -> bool:
+    return text.startswith("@") and len(text) > 1
+
+def is_telegram_link(text: str) -> bool:
+    return text.startswith("https://t.me/") or text.startswith("http://t.me/")
+
+def is_phone_number(text: str) -> bool:
+    # ТОЛЬКО формат +79998887766
+    return bool(re.fullmatch(r"\+\d{10,15}", text))
+
+
+
 def load_ratings():
     if not os.path.exists(FILE_NAME):
         return {}
@@ -310,50 +324,67 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
-    # ЕСЛИ МЫ В РЕЖИМЕ КОММЕНТАРИЯ
+    # ❌ команды не трогаем
+    if text.startswith("/"):
+        return
+
+    # ✅ режим комментариев
     if context.user_data.get("comment_mode"):
         key = context.user_data.get("comment_key")
-
         if not key:
             context.user_data.clear()
             return
 
         ratings[key].setdefault("comments", [])
         ratings[key]["comments"].append(text)
-
         save_ratings(ratings)
 
-        # ❗ ВАЖНО — ВЫХОДИМ ИЗ РЕЖИМА
         context.user_data.clear()
-
         await update.message.reply_text("✅ Комментарий добавлен анонимно")
         return
 
+    # ⛔ НЕ объект — ничего не делаем
+    if not (
+        is_username(text)
+        or is_telegram_link(text)
+        or is_phone_number(text)
+    ):
+        await update.message.reply_text(
+            "❌ Я могу работать только с:\n"
+            "• @username\n"
+            "• ссылками t.me\n"
+            "• номерами телефонов в формате +79998887766"
+        )
+        return
 
-    # 🔴 2. определяем ТИП объекта и СРАЗУ создаём key
+    # ✅ ОПРЕДЕЛЯЕМ КЛЮЧ ОБЪЕКТА
     if is_phone_number(text):
         key = f"phone:{text}"
+    elif is_username(text):
+        key = f"user:{text}"
     else:
-        key = f"custom:{text}"
+        key = f"link:{text}"
 
-    # 🔴 3. инициализация объекта
-    if key not in ratings:
-        ratings[key] = {
-            "score": 0,
-            "votes": {},
-            "tags": {},
-            "tag_voters": [],
-            "comments": []
-        }
-        save_ratings(ratings)
+    context.user_data["current_key"] = key
 
-    # 🔴 4. показываем карточку
+    # создаём объект, если его нет
+    ratings.setdefault(key, {
+        "score": 0,
+        "votes": {},
+        "tags": {},
+        "tag_voters": [],
+        "comments": []
+    })
+
+    save_ratings(ratings)
+
     await update.message.reply_text(
-        f"⭐️ Объект:\n{text}\n\n"
+        f"⭐ Объект:\n{text}\n\n"
         f"Рейтинг: {ratings[key]['score']}\n\n"
         f"🏷 Теги:\n{format_tags(ratings[key]['tags'])}",
         reply_markup=full_keyboard(key)
     )
+
 
 
 
@@ -581,6 +612,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
