@@ -105,11 +105,15 @@ def full_keyboard(key):
             InlineKeyboardButton("👎 -1", callback_data=f"vote|{key}|-1"),
         ],
         [
-            InlineKeyboardButton("🏷 Теги", callback_data=f"open_tags|{key}"),
-            InlineKeyboardButton("💬 Комментарии", callback_data=f"comment|{key}"),
+            InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"comment|{key}"),
+            InlineKeyboardButton("📖 Смотреть комментарии", callback_data=f"view_comments|{key}"),
         ],
+        [
+            InlineKeyboardButton("🏷 Теги", callback_data=f"open_tags|{key}")
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 
 
 
@@ -499,6 +503,47 @@ async def handle_cancel_comment(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=full_keyboard(key)
     )
 
+async def handle_view_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not query.data.startswith("view_comments|"):
+        return
+
+    _, key = query.data.split("|")
+
+    comments = ratings.get(key, {}).get("comments", [])
+
+    if not comments:
+        text = "💬 Комментариев пока нет"
+    else:
+        text = "💬 Комментарии:\n\n"
+        for i, c in enumerate(comments[-10:], 1):
+            text += f"{i}. {c}\n\n"
+
+    await query.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Назад", callback_data=f"back|{key}")]
+        ])
+    )
+
+
+async def handle_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not query.data.startswith("back|"):
+        return
+
+    _, key = query.data.split("|")
+
+    await query.edit_message_text(
+        f"⭐ Объект:\n{key.replace('custom:', '')}\n\n"
+        f"Рейтинг: {ratings[key]['score']}\n\n"
+        f"🏷 Теги:\n{format_tags(ratings[key].get('tags', {}))}",
+        reply_markup=full_keyboard(key)
+    )
 
 
 
@@ -518,6 +563,11 @@ def main():
     app.add_handler(CallbackQueryHandler(open_comments, pattern="^open_comments\\|"))
     app.add_handler(CallbackQueryHandler(handle_comment_button, pattern="^comment\\|"))
     app.add_handler(CallbackQueryHandler(handle_cancel_comment, pattern="^cancel_comment$"))
+    app.add_handler(CallbackQueryHandler(button_handler, pattern="^vote\\|"))
+    app.add_handler(CallbackQueryHandler(handle_comment_button, pattern="^comment\\|"))
+    app.add_handler(CallbackQueryHandler(handle_view_comments, pattern="^view_comments\\|"))
+    app.add_handler(CallbackQueryHandler(handle_back, pattern="^back\\|"))
+
 
 
 
@@ -531,6 +581,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
