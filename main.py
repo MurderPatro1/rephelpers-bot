@@ -21,6 +21,11 @@ from telegram.ext import (
 
 TOKEN = os.getenv("BOT_TOKEN")
 FILE_NAME = "ratings.json"
+ADMIN_ID = 6262540190  # ← ВСТАВЬ СВОЙ telegram user id
+
+STATS_FILE = "stats.json"
+
+
 
 TAG_EMOJIS = {
     "Бизнес": "💼",
@@ -60,17 +65,43 @@ def save_ratings(data):
 
 ratings = load_ratings()
 
+def load_stats():
+    if not os.path.exists(STATS_FILE):
+        return {
+            "users": [],
+            "objects_created": 0,
+            "votes": 0,
+            "tags": 0,
+            "comments": 0,
+        }
+    with open(STATS_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+def save_stats(data):
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+stats = load_stats()
+
+
 def ensure_object(key: str, title: str):
-    ratings.setdefault(key, {
-        "title": title,
-        "score": 0,
-        "votes": {},
-        "tags": {},
-        "tag_voters": [],
-        "comments": []
-    })
+    if key not in ratings:
+        ratings[key] = {
+            "title": title,
+            "score": 0,
+            "votes": {},
+            "tags": {},
+            "tag_voters": [],
+            "comments": []
+        }
+
+        # 📊 статистика: создан новый объект
+        stats["objects_created"] += 1
+        save_stats(stats)
+
     if "title" not in ratings[key]:
         ratings[key]["title"] = title
+
 
 # ================= ФОРМАТ =================
 
@@ -128,6 +159,11 @@ def tags_keyboard(key: str):
 # ================= СТАРТ =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in stats["users"]:
+        stats["users"].append(user_id)
+        save_stats(stats)
+
     context.user_data.clear()
     await update.message.reply_text(
         "👋 Добро пожаловать в бот социального рейтинга\n\n"
@@ -149,6 +185,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key and key in ratings:
             ratings[key]["comments"].append(text)
             save_ratings(ratings)
+            stats["comments"] += 1
+            save_stats(stats)
+
         context.user_data.clear()
         await update.message.reply_text("✅ Комментарий добавлен")
         return
@@ -191,6 +230,9 @@ async def vote_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ratings[key]["score"] += value
     save_ratings(ratings)
 
+    stats["votes"] += 1
+    save_stats(stats)
+
     obj = ratings[key]
     await q.edit_message_text(
         f"⭐ Объект:\n{obj['title']}\n\n"
@@ -221,6 +263,10 @@ async def add_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ratings[key]["tags"][tag] = ratings[key]["tags"].get(tag, 0) + 1
     ratings[key]["tag_voters"].append(user_id)
     save_ratings(ratings)
+
+    stats["tags"] += 1
+    save_stats(stats)
+
 
     await q.answer("✅ Тег добавлен")
     await open_tags(update, context)
@@ -268,6 +314,22 @@ async def view_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
     )
 
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    text = (
+        "📊 Статистика бота\n\n"
+        f"👤 Пользователей: {len(stats['users'])}\n"
+        f"📦 Объектов создано: {stats['objects_created']}\n"
+        f"👍 Голосов: {stats['votes']}\n"
+        f"🏷 Тегов: {stats['tags']}\n"
+        f"💬 Комментариев: {stats['comments']}"
+    )
+
+    await update.message.reply_text(text)
+
 # ================= MAIN =================
 
 def main():
@@ -282,8 +344,11 @@ def main():
     app.add_handler(CallbackQueryHandler(back_handler, pattern="^back\\|"))
     app.add_handler(CallbackQueryHandler(comment_button, pattern="^comment\\|"))
     app.add_handler(CallbackQueryHandler(view_comments, pattern="^view\\|"))
+    app.add_handler(CommandHandler("stats", stats_command))
+
 
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
+
