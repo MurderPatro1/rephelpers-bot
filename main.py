@@ -1,8 +1,8 @@
-import json
 import os
 import re
-import hashlib
 import logging
+import psycopg2
+from urllib.parse import urlparse
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -20,12 +20,8 @@ from telegram.ext import (
 # ================= НАСТРОЙКИ =================
 
 TOKEN = os.getenv("BOT_TOKEN")
-FILE_NAME = "ratings.json"
-ADMIN_ID = 6262540190  # ← ВСТАВЬ СВОЙ telegram user id
-
-STATS_FILE = "stats.json"
-
-
+DATABASE_URL = os.getenv("DATABASE_URL")
+ADMIN_ID = 6262540190  # ← твой ID
 
 TAG_EMOJIS = {
     "Бизнес": "💼",
@@ -33,148 +29,116 @@ TAG_EMOJIS = {
     "Полиция": "👮‍♂️",
     "Легкодоступная": "👱‍♀️",
     "Мошенник": "⚠️",
-    "Балабол": "🗣",
+    "Балабол": "🤥",
 }
-
 
 logging.basicConfig(level=logging.INFO)
 
-# ================= ВСПОМОГАТЕЛЬНЫЕ =================
+# ================= БАЗА =================
 
-def is_username(text: str) -> bool:
-    return text.startswith("@") and len(text) > 1
+def get_conn():
+    result = urlparse(DATABASE_URL)
+    return psycopg2.connect(
+        dbname=result.path[1:],
+        user=result.username,
+        password=result.password,
+        host=result.hostname,
+        port=result.port,
+    )
 
-def is_telegram_link(text: str) -> bool:
-    return text.startswith("https://t.me/") or text.startswith("http://t.me/")
+def init_db():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id BIGINT PRIMARY KEY
+        );
+        CREATE TABLE IF NOT EXISTS objects (
+            id SERIAL PRIMARY KEY,
+            key TEXT UNIQUE,
+            title TEXT,
+            score INT DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS votes (
+            user_id BIGINT,
+            object_id INT,
+            value INT,
+            UNIQUE(user_id, object_id)
+        );
+        CREATE TABLE IF NOT EXISTS tags (
+            object_id INT,
+            tag TEXT,
+            count INT DEFAULT 1,
+            UNIQUE(object_id, tag)
+        );
+        CREATE TABLE IF NOT EXISTS tag_voters (
+            user_id BIGINT,
+            object_id INT,
+            UNIQUE(user_id, object_id)
+        );
+        CREATE TABLE IF NOT EXISTS comments (
+            id SERIAL PRIMARY KEY,
+            object_id INT,
+            text TEXT
+        );
+        """)
+        conn.commit()
 
-def is_phone_number(text: str) -> bool:
-    return bool(re.fullmatch(r"\+\d{10,15}", text))
+# ================= УТИЛИТЫ =================
 
-def make_key(text: str) -> str:
-    return hashlib.md5(text.encode("utf-8")).hexdigest()
+def is_username(t): return t.startswith("@")
+def is_link(t): return t.startswith("http://") or t.startswith("https://")
+def is_phone(t): return bool(re.fullmatch(r"\+\d{10,15}", t))
 
-# ================= ХРАНЕНИЕ =================
-
-def load_ratings():
-    if not os.path.exists(FILE_NAME):
-        return {}
-    with open(FILE_NAME, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_ratings(data):
-    with open(FILE_NAME, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-ratings = load_ratings()
-
-def load_stats():
-    if not os.path.exists(STATS_FILE):
-        return {
-            "users": [],
-            "objects_created": 0,
-            "votes": 0,
-            "tags": 0,
-            "comments": 0,
-        }
-    with open(STATS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def save_stats(data):
-    with open(STATS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-stats = load_stats()
-
-
-def ensure_object(key: str, title: str):
-    if key not in ratings:
-        ratings[key] = {
-            "title": title,
-            "score": 0,
-            "votes": {},
-            "tags": {},
-            "tag_voters": [],
-            "comments": []
-        }
-
-        # 📊 статистика: создан новый объект
-        stats["objects_created"] += 1
-        save_stats(stats)
-
-    if "title" not in ratings[key]:
-        ratings[key]["title"] = title
-
-
-# ================= ФОРМАТ =================
-
-def format_tags(tags: dict) -> str:
-    if not tags:
-        return "—"
-    lines = []
-    for tag, count in sorted(tags.items(), key=lambda x: -x[1]):
-        emoji = TAG_EMOJIS.get(tag, "🏷")
-        lines.append(f"{emoji} {tag} — {count}")
-    return "\n".join(lines)
-
-def format_rating(score: int) -> str:
-    if score > 0:
-        return f"👍 {score}"
-    if score < 0:
-        return f"👎 {score}"
+def format_rating(score):
+    if score > 0: return f"👍 {score}"
+    if score < 0: return f"👎 {score}"
     return f"➖ {score}"
 
 # ================= КЛАВИАТУРЫ =================
 
-def main_keyboard(key: str):
+def main_keyboard(obj_id):
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("👍 +1", callback_data=f"vote|{key}|1"),
-            InlineKeyboardButton("👎 -1", callback_data=f"vote|{key}|-1"),
+            InlineKeyboardButton("👍 +1", callback_data=f"vote|{obj_id}|1"),
+            InlineKeyboardButton("👎 -1", callback_data=f"vote|{obj_id}|-1"),
         ],
         [
-            InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"comment|{key}"),
-            InlineKeyboardButton("📖 Смотреть комментарии", callback_data=f"view|{key}"),
+            InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"comment|{obj_id}"),
+            InlineKeyboardButton("📖 Смотреть комментарии", callback_data=f"view|{obj_id}"),
         ],
         [
-            InlineKeyboardButton("🏷 Теги", callback_data=f"tags|{key}")
+            InlineKeyboardButton("🏷 Теги", callback_data=f"tags|{obj_id}")
         ]
     ])
 
-def tags_keyboard(key: str):
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("💼 Бизнес", callback_data=f"tag|{key}|Бизнес"),
-            InlineKeyboardButton("🔫 Криминал", callback_data=f"tag|{key}|Криминал"),
-        ],
-        [
-            InlineKeyboardButton("👮‍♂️ Полиция", callback_data=f"tag|{key}|Полиция"),
-            InlineKeyboardButton("👱‍♀️ Легкодоступная", callback_data=f"tag|{key}|Легкодоступная"),
-        ],
-        [
-            InlineKeyboardButton("⚠️ Мошенник", callback_data=f"tag|{key}|Мошенник"),
-            InlineKeyboardButton("🗣 Балабол", callback_data=f"tag|{key}|Балабол"),
-        ],
-        [
-            InlineKeyboardButton("⬅️ Назад", callback_data=f"back|{key}")
-        ]
-    ])
+def tags_keyboard(obj_id):
+    rows = []
+    row = []
+    for tag, emoji in TAG_EMOJIS.items():
+        row.append(InlineKeyboardButton(f"{emoji} {tag}", callback_data=f"tag|{obj_id}|{tag}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"back|{obj_id}")])
+    return InlineKeyboardMarkup(rows)
 
 # ================= СТАРТ =================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in stats["users"]:
-        stats["users"].append(user_id)
-        save_stats(stats)
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO users (id) VALUES (%s) ON CONFLICT DO NOTHING",
+                    (update.effective_user.id,))
+        conn.commit()
 
-    context.user_data.clear()
     await update.message.reply_text(
-        "👋 Добро пожаловать в бот социального рейтинга\n\n"
+        "👋 Добро пожаловать\n\n"
         "Отправь:\n"
         "• @username\n"
         "• ссылку t.me\n"
         "• номер телефона +79998887766\n\n"
-        "Голосуй 👍👎, добавляй теги и анонимные комментарии."
+        "Голосуй 👍👎, добавляй теги и комментарии"
     )
 
 # ================= ТЕКСТ =================
@@ -182,177 +146,190 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
-    # режим добавления комментария
     if context.user_data.get("comment_mode"):
-        key = context.user_data.get("comment_key")
-        if key and key in ratings:
-            ratings[key]["comments"].append(text)
-            save_ratings(ratings)
-            stats["comments"] += 1
-            save_stats(stats)
-
+        obj_id = context.user_data["obj_id"]
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO comments (object_id, text) VALUES (%s,%s)",
+                        (obj_id, text))
+            conn.commit()
         context.user_data.clear()
         await update.message.reply_text("✅ Комментарий добавлен")
         return
 
-    if not (is_username(text) or is_telegram_link(text) or is_phone_number(text)):
+    if not (is_username(text) or is_link(text) or is_phone(text)):
         return
 
-    if is_username(text):
-        key = f"user:{text}"
-    elif is_phone_number(text):
-        key = f"phone:{text}"
-    else:
-        key = f"link:{make_key(text)}"
+    key = text.lower()
 
-    ensure_object(key, text)
-    save_ratings(ratings)
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO objects (key, title)
+            VALUES (%s,%s)
+            ON CONFLICT (key) DO UPDATE SET title = EXCLUDED.title
+            RETURNING id, title, score
+        """, (key, text))
+        obj_id, title, score = cur.fetchone()
 
-    obj = ratings[key]
+        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
+        tags = cur.fetchall()
+
+    tag_text = "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags) or "—"
 
     await update.message.reply_text(
-        f"⭐ Объект:\n{obj['title']}\n\n"
-        f"Рейтинг: {format_rating(obj['score'])}\n\n"
-        f"🏷 Теги:\n{format_tags(obj['tags'])}",
-        reply_markup=main_keyboard(key)
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🏷 Теги:\n{tag_text}",
+        reply_markup=main_keyboard(obj_id)
     )
 
 # ================= CALLBACKS =================
 
 async def vote_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    _, key, value = q.data.split("|")
-    user_id = str(q.from_user.id)
+    _, obj_id, value = q.data.split("|")
+    user_id = q.from_user.id
     value = int(value)
 
-    if user_id in ratings[key]["votes"]:
-        await q.answer("❌ Вы уже голосовали", show_alert=True)
-        return
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO votes (user_id, object_id, value)
+            VALUES (%s,%s,%s)
+            ON CONFLICT DO NOTHING
+        """, (user_id, obj_id, value))
+        if cur.rowcount == 0:
+            await q.answer("❌ Вы уже голосовали", show_alert=True)
+            return
+        cur.execute("UPDATE objects SET score = score + %s WHERE id=%s",
+                    (value, obj_id))
+        conn.commit()
 
-    ratings[key]["votes"][user_id] = value
-    ratings[key]["score"] += value
-    save_ratings(ratings)
+    await q.answer("✅ Голос учтён")
+    await back_handler(update, context)
 
-    stats["votes"] += 1
-    save_stats(stats)
-
-    obj = ratings[key]
-    await q.edit_message_text(
-        f"⭐ Объект:\n{obj['title']}\n\n"
-        f"Рейтинг: {format_rating(obj['score'])}\n\n"
-        f"🏷 Теги:\n{format_tags(obj['tags'])}",
-        reply_markup=main_keyboard(key)
-    )
-
-async def open_tags(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def open_tags(update, context):
     q = update.callback_query
-    _, key = q.data.split("|")
-    obj = ratings[key]
-    await q.edit_message_text(
-        f"⭐ Объект:\n{obj['title']}\n\n"
-        f"🏷 Теги:\n{format_tags(obj['tags'])}",
-        reply_markup=tags_keyboard(key)
-    )
+    _, obj_id = q.data.split("|")
+    await q.edit_message_reply_markup(reply_markup=tags_keyboard(obj_id))
 
-async def add_tag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_tag(update, context):
     q = update.callback_query
-    _, key, tag = q.data.split("|")
-    user_id = str(q.from_user.id)
+    _, obj_id, tag = q.data.split("|")
+    user_id = q.from_user.id
 
-    if user_id in ratings[key]["tag_voters"]:
-        await q.answer("❌ Вы уже добавляли тег", show_alert=True)
-        return
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            INSERT INTO tag_voters (user_id, object_id)
+            VALUES (%s,%s) ON CONFLICT DO NOTHING
+        """, (user_id, obj_id))
+        if cur.rowcount == 0:
+            await q.answer("❌ Вы уже добавляли тег", show_alert=True)
+            return
 
-    ratings[key]["tags"][tag] = ratings[key]["tags"].get(tag, 0) + 1
-    ratings[key]["tag_voters"].append(user_id)
-    save_ratings(ratings)
-
-    stats["tags"] += 1
-    save_stats(stats)
-
+        cur.execute("""
+            INSERT INTO tags (object_id, tag, count)
+            VALUES (%s,%s,1)
+            ON CONFLICT (object_id, tag)
+            DO UPDATE SET count = tags.count + 1
+        """, (obj_id, tag))
+        conn.commit()
 
     await q.answer("✅ Тег добавлен")
     await open_tags(update, context)
 
-async def back_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def back_handler(update, context):
     q = update.callback_query
-    _, key = q.data.split("|")
-    obj = ratings[key]
+    _, obj_id = q.data.split("|")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+        title, score = cur.fetchone()
+        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
+        tags = cur.fetchall()
+
+    tag_text = "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags) or "—"
+
     await q.edit_message_text(
-        f"⭐ Объект:\n{obj['title']}\n\n"
-        f"Рейтинг: {format_rating(obj['score'])}\n\n"
-        f"🏷 Теги:\n{format_tags(obj['tags'])}",
-        reply_markup=main_keyboard(key)
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🏷 Теги:\n{tag_text}",
+        reply_markup=main_keyboard(obj_id)
     )
 
-async def comment_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def comment_button(update, context):
     q = update.callback_query
-    _, key = q.data.split("|")
+    _, obj_id = q.data.split("|")
     context.user_data["comment_mode"] = True
-    context.user_data["comment_key"] = key
+    context.user_data["obj_id"] = obj_id
     await q.edit_message_text(
-        "💬 Напишите комментарий одним сообщением\n\n"
-        "⚠️ Комментарий будет анонимным",
+        "💬 Напишите комментарий\n\n⚠️ Анонимно",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Отмена", callback_data=f"back|{key}")]
+            [InlineKeyboardButton("⬅️ Отмена", callback_data=f"back|{obj_id}")]
         ])
     )
 
-async def view_comments(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def view_comments(update, context):
     q = update.callback_query
-    _, key = q.data.split("|")
-    comments = ratings[key]["comments"]
+    _, obj_id = q.data.split("|")
 
-    if not comments:
-        text = "💬 Комментариев пока нет"
-    else:
-        text = "💬 Комментарии:\n\n"
-        for c in comments[-10:]:
-            text += f"• {c}\n\n"
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT text FROM comments WHERE object_id=%s ORDER BY id DESC LIMIT 10",
+                    (obj_id,))
+        comments = cur.fetchall()
+
+    text = "💬 Комментарии:\n\n" + "\n\n".join(f"• {c[0]}" for c in comments) if comments else "💬 Комментариев нет"
 
     await q.edit_message_text(
         text,
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Назад", callback_data=f"back|{key}")]
+            [InlineKeyboardButton("⬅️ Назад", callback_data=f"back|{obj_id}")]
         ])
     )
 
+# ================= /STATS =================
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stats_cmd(update, context):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    text = (
-        "📊 Статистика бота\n\n"
-        f"👤 Пользователей: {len(stats['users'])}\n"
-        f"📦 Объектов создано: {stats['objects_created']}\n"
-        f"👍 Голосов: {stats['votes']}\n"
-        f"🏷 Тегов: {stats['tags']}\n"
-        f"💬 Комментариев: {stats['comments']}"
-    )
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM users")
+        users = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM objects")
+        objects = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM votes")
+        votes = cur.fetchone()[0]
+        cur.execute("SELECT SUM(count) FROM tags")
+        tags = cur.fetchone()[0] or 0
+        cur.execute("SELECT COUNT(*) FROM comments")
+        comments = cur.fetchone()[0]
 
-    await update.message.reply_text(text)
+    await update.message.reply_text(
+        f"📊 Статистика\n\n"
+        f"👤 Пользователей: {users}\n"
+        f"⭐ Объектов: {objects}\n"
+        f"👍 Голосов: {votes}\n"
+        f"🏷 Тегов: {tags}\n"
+        f"💬 Комментариев: {comments}"
+    )
 
 # ================= MAIN =================
 
 def main():
+    init_db()
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    app.add_handler(CallbackQueryHandler(vote_handler, pattern="^vote\\|"))
-    app.add_handler(CallbackQueryHandler(open_tags, pattern="^tags\\|"))
-    app.add_handler(CallbackQueryHandler(add_tag, pattern="^tag\\|"))
-    app.add_handler(CallbackQueryHandler(back_handler, pattern="^back\\|"))
-    app.add_handler(CallbackQueryHandler(comment_button, pattern="^comment\\|"))
-    app.add_handler(CallbackQueryHandler(view_comments, pattern="^view\\|"))
-    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CallbackQueryHandler(vote_handler, pattern="^vote"))
+    app.add_handler(CallbackQueryHandler(open_tags, pattern="^tags"))
+    app.add_handler(CallbackQueryHandler(add_tag, pattern="^tag"))
+    app.add_handler(CallbackQueryHandler(back_handler, pattern="^back"))
+    app.add_handler(CallbackQueryHandler(comment_button, pattern="^comment"))
+    app.add_handler(CallbackQueryHandler(view_comments, pattern="^view"))
 
-
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
-
-
