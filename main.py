@@ -20,7 +20,6 @@ from telegram.ext import (
 # ================= НАСТРОЙКИ =================
 
 TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = 6262540190  # ← твой ID
 
 TAG_EMOJIS = {
@@ -37,14 +36,20 @@ logging.basicConfig(level=logging.INFO)
 # ================= БАЗА =================
 
 def get_conn():
-    result = urlparse(DATABASE_URL)
-    return psycopg2.connect(
-        dbname=result.path[1:],
-        user=result.username,
-        password=result.password,
-        host=result.hostname,
-        port=result.port,
-    )
+    # Получаем DATABASE_URL из переменных окружения Railway
+    database_url = os.environ.get('DATABASE_URL')
+    
+    if not database_url:
+        raise ValueError("DATABASE_URL не установлен. Проверьте настройки Railway.")
+    
+    # Если DATABASE_URL начинается с postgresql://, заменяем на postgres://
+    # так как psycopg2 ожидает postgres://
+    if database_url.startswith('postgresql://'):
+        database_url = database_url.replace('postgresql://', 'postgres://', 1)
+    
+    # Используем строку подключения напрямую
+    # Railway автоматически добавляет SSL параметры в строку
+    return psycopg2.connect(database_url, sslmode='require')
 
 def init_db():
     with get_conn() as conn, conn.cursor() as cur:
@@ -333,3 +338,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
