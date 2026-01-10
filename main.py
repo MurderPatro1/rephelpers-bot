@@ -37,59 +37,51 @@ logging.basicConfig(level=logging.INFO)
 # ================= БАЗА =================
 
 def get_conn():
-    if not DATABASE_URL:
-        logging.error("DATABASE_URL не установлен!")
-        raise ValueError("DATABASE_URL не найден в переменных окружения")
-    
-    # Railway использует postgresql://, меняем на postgres:// для psycopg2
-    url = DATABASE_URL
-    if url.startswith('postgresql://'):
-        url = url.replace('postgresql://', 'postgres://', 1)
-    
-    # Подключаемся с SSL
-    return psycopg2.connect(url, sslmode='require')
+    result = urlparse(DATABASE_URL)
+    return psycopg2.connect(
+        dbname=result.path[1:],
+        user=result.username,
+        password=result.password,
+        host=result.hostname,
+        port=result.port,
+    )
 
 def init_db():
-    try:
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id BIGINT PRIMARY KEY
-            );
-            CREATE TABLE IF NOT EXISTS objects (
-                id SERIAL PRIMARY KEY,
-                key TEXT UNIQUE,
-                title TEXT,
-                score INT DEFAULT 0
-            );
-            CREATE TABLE IF NOT EXISTS votes (
-                user_id BIGINT,
-                object_id INT,
-                value INT,
-                UNIQUE(user_id, object_id)
-            );
-            CREATE TABLE IF NOT EXISTS tags (
-                object_id INT,
-                tag TEXT,
-                count INT DEFAULT 1,
-                UNIQUE(object_id, tag)
-            );
-            CREATE TABLE IF NOT EXISTS tag_voters (
-                user_id BIGINT,
-                object_id INT,
-                UNIQUE(user_id, object_id)
-            );
-            CREATE TABLE IF NOT EXISTS comments (
-                id SERIAL PRIMARY KEY,
-                object_id INT,
-                text TEXT
-            );
-            """)
-            conn.commit()
-            logging.info("✅ База данных инициализирована")
-    except Exception as e:
-        logging.error(f"❌ Ошибка инициализации БД: {e}")
-        raise
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id BIGINT PRIMARY KEY
+        );
+        CREATE TABLE IF NOT EXISTS objects (
+            id SERIAL PRIMARY KEY,
+            key TEXT UNIQUE,
+            title TEXT,
+            score INT DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS votes (
+            user_id BIGINT,
+            object_id INT,
+            value INT,
+            UNIQUE(user_id, object_id)
+        );
+        CREATE TABLE IF NOT EXISTS tags (
+            object_id INT,
+            tag TEXT,
+            count INT DEFAULT 1,
+            UNIQUE(object_id, tag)
+        );
+        CREATE TABLE IF NOT EXISTS tag_voters (
+            user_id BIGINT,
+            object_id INT,
+            UNIQUE(user_id, object_id)
+        );
+        CREATE TABLE IF NOT EXISTS comments (
+            id SERIAL PRIMARY KEY,
+            object_id INT,
+            text TEXT
+        );
+        """)
+        conn.commit()
 
 # ================= УТИЛИТЫ =================
 
