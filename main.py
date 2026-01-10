@@ -33,7 +33,9 @@ TAG_EMOJIS = {
     "Полиция": "👮‍♂️",
     "Легкодоступная": "👱‍♀️",
     "Мошенник": "⚠️",
+    "Балабол": "🗣",
 }
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -150,6 +152,7 @@ def tags_keyboard(key: str):
         ],
         [
             InlineKeyboardButton("⚠️ Мошенник", callback_data=f"tag|{key}|Мошенник"),
+            InlineKeyboardButton("🗣 Балабол", callback_data=f"tag|{key}|Балабол"),
         ],
         [
             InlineKeyboardButton("⬅️ Назад", callback_data=f"back|{key}")
@@ -351,4 +354,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
