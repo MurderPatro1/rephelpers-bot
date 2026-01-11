@@ -192,8 +192,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = normalized_phone
 
     else:
-        # ❗ ВАЖНО: этот return теперь ВНУТРИ функции
-        return
+    await update.message.reply_text(
+        "❌ Я могу работать только с:\n"
+        "• @username или username\n"
+        "• ссылками t.me\n"
+        "• номерами телефонов РФ\n"
+        "Примеры:\n"
+        "+79234051000\n"
+        "89234051000\n"
+        "8 (923) 405-10-00"
+    )
+    return
+
 
     # фиксируем нового пользователя
     user_id = update.effective_user.id
@@ -371,5 +381,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
