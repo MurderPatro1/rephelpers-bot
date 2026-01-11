@@ -213,28 +213,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== СОЗДАНИЕ / ПОЛУЧЕНИЕ ОБЪЕКТА =====
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT id, score FROM objects WHERE key=%s",
-            (key,)
-        )
-        row = cur.fetchone()
-
-        if row:
-            obj_id, score = row
-        else:
-            cur.execute(
-                "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id, score",
-                (key, title)
-            )
-            obj_id, score = cur.fetchone()
-            conn.commit()
-
-    # ===== ОТВЕТ =====
-    await update.message.reply_text(
-        f"⭐ Объект:\n{title}\n\n"
-        f"Рейтинг: {format_rating(score)}",
-        reply_markup=main_keyboard(obj_id)
+    cur.execute(
+        "SELECT tag, count FROM tags WHERE object_id=%s",
+        (obj_id,)
     )
+    tags = cur.fetchall()
+
+tag_text = (
+    "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags)
+    if tags else "—"
+)
+
+await update.message.reply_text(
+    f"⭐ Объект:\n{title}\n\n"
+    f"Рейтинг: {format_rating(score)}\n\n"
+    f"🏷 Теги:\n{tag_text}",
+    reply_markup=main_keyboard(obj_id)
+)
+
 
 
 
@@ -389,6 +385,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
