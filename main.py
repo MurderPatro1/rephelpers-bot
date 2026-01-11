@@ -212,7 +212,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ===== СОЗДАНИЕ / ПОЛУЧЕНИЕ ОБЪЕКТА =====
-       with get_conn() as conn, conn.cursor() as cur:
+    with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT id, title, score FROM objects WHERE key=%s",
             (key,)
@@ -403,6 +403,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
