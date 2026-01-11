@@ -212,7 +212,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ===== СОЗДАНИЕ / ПОЛУЧЕНИЕ ОБЪЕКТА =====
-    with get_conn() as conn, conn.cursor() as cur:
+with get_conn() as conn, conn.cursor() as cur:
     cur.execute(
         "SELECT tag, count FROM tags WHERE object_id=%s",
         (obj_id,)
@@ -220,7 +220,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tags = cur.fetchall()
 
 tag_text = (
-    "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags)
+    "\n".join(f"{TAG_EMOJIS.get(t, '🏷')} {t} — {c}" for t, c in tags)
     if tags else "—"
 )
 
@@ -230,6 +230,7 @@ await update.message.reply_text(
     f"🏷 Теги:\n{tag_text}",
     reply_markup=main_keyboard(obj_id)
 )
+
 
 
 
@@ -385,6 +386,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
