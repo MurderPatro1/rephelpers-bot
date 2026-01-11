@@ -164,27 +164,34 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
-    # режим добавления комментария
+    # ===== РЕЖИМ КОММЕНТАРИЯ =====
     if context.user_data.get("comment_mode"):
-        key = context.user_data.get("comment_key")
-        if key and key in ratings:
-            ratings[key]["comments"].append(text)
-            stats["comments"] += 1
-            save_ratings(ratings)
-            save_stats(stats)
+        obj_id = context.user_data.get("obj_id")
+
+        if obj_id:
+            with get_conn() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO comments (object_id, text) VALUES (%s,%s)",
+                    (obj_id, text)
+                )
+                conn.commit()
 
         context.user_data.clear()
         await update.message.reply_text("✅ Комментарий добавлен")
         return
 
+    # ===== ОПРЕДЕЛЕНИЕ ОБЪЕКТА =====
     normalized_phone = normalize_phone(text)
+
+    key = None
+    title = None
 
     if is_username(text):
         key = f"user:{text.lower()}"
         title = text
 
-    elif is_telegram_link(text):
-        key = f"link:{make_key(text)}"
+    elif is_link(text):
+        key = f"link:{text}"
         title = text
 
     elif normalized_phone:
@@ -192,42 +199,43 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = normalized_phone
 
     else:
+        await update.message.reply_text(
+            "❌ Я могу работать только с:\n"
+            "• @username\n"
+            "• ссылками t.me\n"
+            "• номерами телефонов РФ\n\n"
+            "Примеры:\n"
+            "+79234051000\n"
+            "89234051000\n"
+            "8 (923) 405-10-00"
+        )
+        return
+
+    # ===== СОЗДАНИЕ / ПОЛУЧЕНИЕ ОБЪЕКТА =====
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, score FROM objects WHERE key=%s",
+            (key,)
+        )
+        row = cur.fetchone()
+
+        if row:
+            obj_id, score = row
+        else:
+            cur.execute(
+                "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id, score",
+                (key, title)
+            )
+            obj_id, score = cur.fetchone()
+            conn.commit()
+
+    # ===== ОТВЕТ =====
     await update.message.reply_text(
-        "❌ Я могу работать только с:\n"
-        "• @username или username\n"
-        "• ссылками t.me\n"
-        "• номерами телефонов РФ\n"
-        "Примеры:\n"
-        "+79234051000\n"
-        "89234051000\n"
-        "8 (923) 405-10-00"
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}",
+        reply_markup=main_keyboard(obj_id)
     )
-    return
 
-
-    # фиксируем нового пользователя
-    user_id = update.effective_user.id
-    if user_id not in stats["users"]:
-        stats["users"].append(user_id)
-        save_stats(stats)
-
-    ensure_object(key, title)
-
-    # считаем создание объекта
-    if ratings[key]["score"] == 0 and not ratings[key]["votes"]:
-        stats["objects_created"] += 1
-        save_stats(stats)
-
-    save_ratings(ratings)
-
-    obj = ratings[key]
-
-    await update.message.reply_text(
-        f"⭐ Объект:\n{obj['title']}\n\n"
-        f"Рейтинг: {format_rating(obj['score'])}\n\n"
-        f"🏷 Теги:\n{format_tags(obj['tags'])}",
-        reply_markup=main_keyboard(key)
-    )
 
 
 # ================= CALLBACKS =================
@@ -381,6 +389,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
