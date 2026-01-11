@@ -164,54 +164,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
+    # режим добавления комментария
     if context.user_data.get("comment_mode"):
-        obj_id = context.user_data["obj_id"]
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute("INSERT INTO comments (object_id, text) VALUES (%s,%s)",
-                        (obj_id, text))
-            conn.commit()
+        key = context.user_data.get("comment_key")
+        if key and key in ratings:
+            ratings[key]["comments"].append(text)
+            stats["comments"] += 1
+            save_ratings(ratings)
+            save_stats(stats)
+
         context.user_data.clear()
         await update.message.reply_text("✅ Комментарий добавлен")
         return
 
-normalized_phone = normalize_phone(text)
+    normalized_phone = normalize_phone(text)
 
-if is_username(text):
-    key = text.lower()
-    title = text
+    if is_username(text):
+        key = f"user:{text.lower()}"
+        title = text
 
-elif is_link(text):
-    key = text.lower()
-    title = text
+    elif is_telegram_link(text):
+        key = f"link:{make_key(text)}"
+        title = text
 
-elif normalized_phone:
-    key = normalized_phone
-    title = normalized_phone
+    elif normalized_phone:
+        key = f"phone:{normalized_phone}"
+        title = normalized_phone
 
-else:
-    return
+    else:
+        # ❗ ВАЖНО: этот return теперь ВНУТРИ функции
+        return
 
+    # фиксируем нового пользователя
+    user_id = update.effective_user.id
+    if user_id not in stats["users"]:
+        stats["users"].append(user_id)
+        save_stats(stats)
 
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO objects (key, title)
-            VALUES (%s,%s)
-            ON CONFLICT (key) DO UPDATE SET title = EXCLUDED.title
-            RETURNING id, title, score
-        """, (key, text))
-        obj_id, title, score = cur.fetchone()
+    ensure_object(key, title)
 
-        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
-        tags = cur.fetchall()
+    # считаем создание объекта
+    if ratings[key]["score"] == 0 and not ratings[key]["votes"]:
+        stats["objects_created"] += 1
+        save_stats(stats)
 
-    tag_text = "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags) or "—"
+    save_ratings(ratings)
+
+    obj = ratings[key]
 
     await update.message.reply_text(
-        f"⭐ Объект:\n{title}\n\n"
-        f"Рейтинг: {format_rating(score)}\n\n"
-        f"🏷 Теги:\n{tag_text}",
-        reply_markup=main_keyboard(obj_id)
+        f"⭐ Объект:\n{obj['title']}\n\n"
+        f"Рейтинг: {format_rating(obj['score'])}\n\n"
+        f"🏷 Теги:\n{format_tags(obj['tags'])}",
+        reply_markup=main_keyboard(key)
     )
+
 
 # ================= CALLBACKS =================
 
@@ -364,4 +371,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
