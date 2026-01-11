@@ -87,12 +87,30 @@ def init_db():
 
 def is_username(t): return t.startswith("@")
 def is_link(t): return t.startswith("http://") or t.startswith("https://")
-def is_phone(t): return bool(re.fullmatch(r"\+\d{10,15}", t))
 
 def format_rating(score):
     if score > 0: return f"👍 {score}"
     if score < 0: return f"👎 {score}"
     return f"➖ {score}"
+
+def normalize_phone(text: str) -> str | None:
+    # убираем всё кроме цифр
+    digits = re.sub(r"\D", "", text)
+
+    # 11 цифр, начинается с 8 → меняем на 7
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+
+    # 11 цифр и начинается с 7
+    if len(digits) == 11 and digits.startswith("7"):
+        return f"+{digits}"
+
+    # 10 цифр (без кода страны)
+    if len(digits) == 10:
+        return f"+7{digits}"
+
+    return None
+
 
 # ================= КЛАВИАТУРЫ =================
 
@@ -156,10 +174,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Комментарий добавлен")
         return
 
-    if not (is_username(text) or is_link(text) or is_phone(text)):
-        return
+normalized_phone = normalize_phone(text)
 
+if is_username(text):
     key = text.lower()
+    title = text
+
+elif is_link(text):
+    key = text.lower()
+    title = text
+
+elif normalized_phone:
+    key = normalized_phone
+    title = normalized_phone
+
+else:
+    return
+
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
@@ -333,3 +364,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
