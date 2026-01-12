@@ -269,17 +269,38 @@ async def vote_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if cur.rowcount == 0:
             await q.answer("❌ Вы уже голосовали", show_alert=True)
             return
-        cur.execute("UPDATE objects SET score = score + %s WHERE id=%s",
-                    (value, obj_id))
+
+        cur.execute(
+            "UPDATE objects SET score = score + %s WHERE id=%s",
+            (value, obj_id)
+        )
         conn.commit()
 
     await q.answer("✅ Голос учтён")
     await back_handler(update, context)
 
+
 async def open_tags(update, context):
     q = update.callback_query
     _, obj_id = q.data.split("|")
-    await q.edit_message_reply_markup(reply_markup=tags_keyboard(obj_id))
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+        title, score = cur.fetchone()
+        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
+        tags = cur.fetchall()
+
+    tag_text = "\n".join(
+        f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags
+    ) or "—"
+
+    await q.edit_message_text(
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🏷 Теги:\n{tag_text}",
+        reply_markup=tags_keyboard(obj_id)
+    )
+
 
 async def add_tag(update, context):
     q = update.callback_query
@@ -304,7 +325,7 @@ async def add_tag(update, context):
         conn.commit()
 
     await q.answer("✅ Тег добавлен")
-    await open_tags(update, context)
+    await back_handler(update, context)
 
 async def back_handler(update, context):
     q = update.callback_query
@@ -403,6 +424,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
