@@ -88,6 +88,20 @@ def init_db():
 def is_username(t): return t.startswith("@")
 def is_link(t): return t.startswith("http://") or t.startswith("https://")
 
+def is_vk_link(text: str) -> bool:
+    return bool(re.match(r"^(https?://)?(www\.)?vk\.com/[\w\d_.]+$", text))
+
+
+def normalize_vk(text: str) -> str | None:
+    """
+    Возвращает username / id123 / public123
+    """
+    m = re.match(r"^(https?://)?(www\.)?vk\.com/([\w\d_.]+)$", text)
+    if not m:
+        return None
+    return m.group(3).lower()
+
+
 def format_rating(score):
     if score > 0: return f"👍 {score}"
     if score < 0: return f"👎 {score}"
@@ -155,7 +169,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Отправь:\n"
         "• @username\n"
         "• ссылку t.me\n"
+        "• ссылку VK\n"
         "• номер телефона +79998887766\n\n"
+
         "Голосуй 👍👎, добавляй теги и комментарии"
     )
 
@@ -182,13 +198,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== ОПРЕДЕЛЕНИЕ ОБЪЕКТА =====
     normalized_phone = normalize_phone(text)
-
-    key = None
-    title = None
+    vk_username = normalize_vk(text)
 
     if is_username(text):
         key = f"user:{text.lower()}"
         title = text
+
+    elif vk_username:
+        key = f"vk:{vk_username}"
+        title = f"https://vk.com/{vk_username}"
 
     elif is_link(text):
         key = f"link:{text}"
@@ -198,16 +216,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         key = f"phone:{normalized_phone}"
         title = normalized_phone
 
+
     else:
         await update.message.reply_text(
             "❌ Я могу работать только с:\n"
-            "• @username\n"
             "• ссылками t.me\n"
+            "• ссылками vk.com\n"
             "• номерами телефонов РФ\n\n"
+
             "Примеры:\n"
-            "+79234051000\n"
-            "89234051000\n"
-            "8 (923) 405-10-00"
+            "+78005553535\n"
+            "88005553535\n"
+            "8 (800) 555-35-35"
         )
         return
 
@@ -463,6 +483,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
