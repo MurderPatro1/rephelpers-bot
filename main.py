@@ -219,24 +219,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif vk_username:
         link_type = "vk"
-        link_value = vk_username
+        link_value = vk_username   # ← ТОЛЬКО username
         title = f"https://vk.com/{vk_username}"
-
-    elif is_link(text):
-        if "t.me" in text:
-            link_type = "tg"
-        elif "vk.com" in text:
-            link_type = "vk"
-        else:
-            link_type = "link"
-
-        link_value = text.lower()
-        title = text
 
     elif normalized_phone:
         link_type = "phone"
         link_value = normalized_phone
         title = normalized_phone
+
+    elif "t.me" in text:
+        link_type = "tg"
+        link_value = text.lower()
+        title = text
+
 
     else:
         await update.message.reply_text(
@@ -296,7 +291,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_keyboard(obj_id)
     )
 
-
+    except Exception as e:
+        logging.exception("HANDLE_TEXT ERROR")
+        await update.message.reply_text("❌ Внутренняя ошибка, смотри логи")
 
 
 # ================= CALLBACKS =================
@@ -510,6 +507,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
