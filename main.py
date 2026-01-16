@@ -291,10 +291,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_keyboard(obj_id)
     )
 
-    except Exception as e:
-        logging.exception("HANDLE_TEXT ERROR")
-        await update.message.reply_text("❌ Внутренняя ошибка, смотри логи")
-
+    
 
 # ================= CALLBACKS =================
 
@@ -507,6 +504,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
