@@ -80,6 +80,14 @@ def init_db():
             object_id INT,
             text TEXT
         );
+        CREATE TABLE IF NOT EXISTS object_links (
+            id SERIAL PRIMARY KEY,
+            object_id INT REFERENCES objects(id) ON DELETE CASCADE,
+            type TEXT,        -- phone | tg | vk
+            value TEXT,
+            UNIQUE(type, value)
+        );
+
         """)
         conn.commit()
 
@@ -200,20 +208,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     normalized_phone = normalize_phone(text)
     vk_username = normalize_vk(text)
 
-    if is_username(text):
-        key = f"user:{text.lower()}"
-        title = text
+   if is_username(text):
+       link_type = "tg"
+       link_value = text.lower()
+       title = text
 
     elif vk_username:
         key = f"vk:{vk_username}"
         title = f"https://vk.com/{vk_username}"
 
-    elif is_link(text):
-        key = f"link:{text}"
+    elif is_vk_link(text):
+        link_type = "vk"
+        link_value = text.lower()
         title = text
 
     elif normalized_phone:
-        key = f"phone:{normalized_phone}"
+        link_type = "phone"
+        link_value = normalized_phone
         title = normalized_phone
 
 
@@ -232,41 +243,39 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ===== СОЗДАНИЕ / ПОЛУЧЕНИЕ ОБЪЕКТА =====
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT id, title, score FROM objects WHERE key=%s",
-            (key,)
-        )
-        row = cur.fetchone()
-
-        if row:
-            obj_id, title, score = row
-        else:
-            cur.execute(
-                "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
-                (key, title)
-            )
-            obj_id = cur.fetchone()[0]
-            score = 0
-            conn.commit()
-
-        cur.execute(
-            "SELECT tag, count FROM tags WHERE object_id=%s",
-            (obj_id,)
-        )
-        tags = cur.fetchall()
-
-    tag_text = (
-        "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags)
-        if tags else "—"
+  with get_conn() as conn, conn.cursor() as cur:
+    # 1. ищем связь
+    cur.execute(
+        "SELECT object_id FROM object_links WHERE type=%s AND value=%s",
+        (link_type, link_value)
     )
+    row = cur.fetchone()
 
-    await update.message.reply_text(
-        f"⭐ Объект:\n{title}\n\n"
-        f"Рейтинг: {format_rating(score)}\n\n"
-        f"🏷 Теги:\n{tag_text}",
-        reply_markup=main_keyboard(obj_id)
-    )
+    if row:
+        obj_id = row[0]
+    else:
+        # 2. создаём новый объект
+        cur.execute(
+            "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
+            (f"{link_type}:{link_value}", title)
+        )
+        obj_id = cur.fetchone()[0]
+
+        # 3. добавляем связь
+        cur.execute(
+            "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
+            (obj_id, link_type, link_value)
+        )
+
+    # 4. получаем данные объекта
+    cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+    title, score = cur.fetchone()
+
+    cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
+    tags = cur.fetchall()
+
+    conn.commit()
+
 
 
 
@@ -483,6 +492,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
