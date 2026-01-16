@@ -204,21 +204,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Комментарий добавлен")
         return
 
-    # ===== ОПРЕДЕЛЕНИЕ ОБЪЕКТА =====
+   # ===== ОПРЕДЕЛЕНИЕ ОБЪЕКТА =====
     normalized_phone = normalize_phone(text)
     vk_username = normalize_vk(text)
 
+    link_type = None
+    link_value = None
+    title = None
+
     if is_username(text):
-       link_type = "tg"
-       link_value = text.lower()
-       title = text
+        link_type = "tg"
+        link_value = text.lower()
+        title = text
 
     elif vk_username:
-        key = f"vk:{vk_username}"
+        link_type = "vk"
+        link_value = vk_username
         title = f"https://vk.com/{vk_username}"
 
-    elif is_vk_link(text):
-        link_type = "vk"
+    elif is_link(text):
+        if "t.me" in text:
+            link_type = "tg"
+        elif "vk.com" in text:
+            link_type = "vk"
+        else:
+            link_type = "link"
+
         link_value = text.lower()
         title = text
 
@@ -227,54 +238,52 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         link_value = normalized_phone
         title = normalized_phone
 
-
     else:
         await update.message.reply_text(
             "❌ Я могу работать только с:\n"
+            "• @username\n"
             "• ссылками t.me\n"
             "• ссылками vk.com\n"
-            "• номерами телефонов РФ\n\n"
-
-            "Примеры:\n"
-            "+78005553535\n"
-            "88005553535\n"
-            "8 (800) 555-35-35"
+            "• номерами телефонов РФ"
         )
         return
 
+
     # ===== СОЗДАНИЕ / ПОЛУЧЕНИЕ ОБЪЕКТА =====
-with get_conn() as conn, conn.cursor() as cur:
-    # 1. ищем связь
-    cur.execute(
-        "SELECT object_id FROM object_links WHERE type=%s AND value=%s",
-        (link_type, link_value)
-    )
-    row = cur.fetchone()
+    with get_conn() as conn, conn.cursor() as cur:
 
-    if row:
-        obj_id = row[0]
-    else:
-        # 2. создаём новый объект
+        # 1. ищем существующую связь
         cur.execute(
-            "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
-            (f"{link_type}:{link_value}", title)
+            "SELECT object_id FROM object_links WHERE type=%s AND value=%s",
+            (link_type, link_value)
         )
-        obj_id = cur.fetchone()[0]
+        row = cur.fetchone()
 
-        # 3. добавляем связь
-        cur.execute(
-            "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
-            (obj_id, link_type, link_value)
-        )
+        if row:
+            obj_id = row[0]
+        else:
+            # 2. создаём объект
+            cur.execute(
+                "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
+                (f"{link_type}:{link_value}", title)
+            )
+            obj_id = cur.fetchone()[0]
 
-    # 4. получаем данные объекта
-    cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
-    title, score = cur.fetchone()
+            # 3. добавляем связь
+            cur.execute(
+                "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
+                (obj_id, link_type, link_value)
+            )
 
-    cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
-    tags = cur.fetchall()
+        # 4. получаем данные объекта
+        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+        title, score = cur.fetchone()
 
-    conn.commit()
+        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
+        tags = cur.fetchall()
+
+        conn.commit()
+
 
 
 
@@ -492,6 +501,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
