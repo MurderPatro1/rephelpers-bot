@@ -208,7 +208,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     normalized_phone = normalize_phone(text)
     vk_username = normalize_vk(text)
 
-   if is_username(text):
+    if is_username(text):
        link_type = "tg"
        link_value = text.lower()
        title = text
@@ -492,6 +492,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
