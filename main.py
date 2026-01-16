@@ -284,8 +284,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn.commit()
 
+    tag_text = (
+        "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags)
+        if tags else "—"
+    )
 
-
+    await update.message.reply_text(
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🏷 Теги:\n{tag_text}",
+        reply_markup=main_keyboard(obj_id)
+    )
 
 
 
@@ -501,6 +510,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
