@@ -415,20 +415,65 @@ async def back_handler(update, context):
 async def vote_handler(update, context):
     q = update.callback_query
     _, obj_id, val = q.data.split("|")
+    obj_id = int(obj_id)
     val = int(val)
 
     with get_conn() as conn, conn.cursor() as cur:
+        # защита от повторного голосования
         cur.execute(
-            "INSERT INTO votes VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+            "INSERT INTO votes (user_id, object_id, value) VALUES (%s,%s,%s) "
+            "ON CONFLICT DO NOTHING",
             (q.from_user.id, obj_id, val)
         )
         if cur.rowcount == 0:
-            await q.answer("❌ Уже голосовали", show_alert=True)
+            await q.answer("❌ Вы уже голосовали", show_alert=True)
             return
-        cur.execute("UPDATE objects SET score = score + %s WHERE id=%s", (val, obj_id))
+
+        # обновляем рейтинг
+        cur.execute(
+            "UPDATE objects SET score = score + %s WHERE id = %s",
+            (val, obj_id)
+        )
+
+        # читаем обновлённые данные
+        cur.execute(
+            "SELECT title, score FROM objects WHERE id = %s",
+            (obj_id,)
+        )
+        title, score = cur.fetchone()
+
+        cur.execute(
+            "SELECT type, value FROM object_links WHERE object_id = %s",
+            (obj_id,)
+        )
+        links = cur.fetchall()
+
+        cur.execute(
+            "SELECT tag, count FROM tags WHERE object_id = %s",
+            (obj_id,)
+        )
+        tags = cur.fetchall()
+
         conn.commit()
 
+    links_text = "\n".join(
+        f"• {t}: {v}" for t, v in links
+    ) or "—"
+
+    tags_text = "\n".join(
+        f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags
+    ) or "—"
+
+    await q.edit_message_text(
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🔗 Связанные данные:\n{links_text}\n\n"
+        f"🏷 Теги:\n{tags_text}",
+        reply_markup=main_keyboard(obj_id)
+    )
+
     await q.answer("✅")
+
 
 
 async def link_button(update, context):
@@ -496,6 +541,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
