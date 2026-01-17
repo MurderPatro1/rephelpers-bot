@@ -90,6 +90,29 @@ def init_db():
         """)
         conn.commit()
 
+def migrate_old_objects():
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT id, key FROM objects
+            WHERE key LIKE '%:%'
+        """)
+        rows = cur.fetchall()
+
+        for obj_id, key in rows:
+            try:
+                ltype, lval = key.split(":", 1)
+            except ValueError:
+                continue
+
+            cur.execute("""
+                INSERT INTO object_links (object_id, type, value)
+                VALUES (%s,%s,%s)
+                ON CONFLICT DO NOTHING
+            """, (obj_id, ltype, lval))
+
+        conn.commit()
+
+
 # ================= УТИЛИТЫ =================
 
 def normalize_phone(text):
@@ -521,6 +544,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     init_db()
+    migrate_old_objects()
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -541,6 +565,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
