@@ -200,9 +200,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT object_id FROM object_links WHERE type=%s AND value=%s",
-                    (ltype, lval))
+        cur.execute("""
+            SELECT o.id
+            FROM objects o
+            LEFT JOIN object_links l ON l.object_id = o.id
+            WHERE o.key = %s OR (l.type = %s AND l.value = %s)
+            LIMIT 1
+        """, (f"{ltype}:{lval}", ltype, lval))
         row = cur.fetchone()
+
 
         if row:
             obj_id = row[0]
@@ -432,6 +438,40 @@ async def link_button(update, context):
     context.user_data["obj_id"] = obj_id
     await q.edit_message_text("➕ Отправьте данные для связи")
 
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM users")
+        users = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM objects")
+        objects = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM object_links")
+        links = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM votes")
+        votes = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM comments")
+        comments = cur.fetchone()[0]
+
+        cur.execute("SELECT COALESCE(SUM(count),0) FROM tags")
+        tags = cur.fetchone()[0]
+
+    await update.message.reply_text(
+        f"📊 Статистика\n\n"
+        f"👤 Пользователей: {users}\n"
+        f"⭐ Объектов: {objects}\n"
+        f"🔗 Связей: {links}\n"
+        f"👍 Голосов: {votes}\n"
+        f"🏷 Тегов: {tags}\n"
+        f"💬 Комментариев: {comments}"
+    )
+
+
 # ================= MAIN =================
 
 def main():
@@ -448,11 +488,14 @@ def main():
     app.add_handler(CallbackQueryHandler(view_comments, pattern="^view"))
     app.add_handler(CallbackQueryHandler(back_handler, pattern="^back"))
     app.add_handler(CallbackQueryHandler(link_button, pattern="^link"))
+    app.add_handler(CommandHandler("stats", stats_cmd))
+
 
 
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
 
 
