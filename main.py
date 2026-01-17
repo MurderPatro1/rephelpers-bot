@@ -164,6 +164,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
+    # ===== COMMENT MODE =====
+    if context.user_data.get("comment_mode"):
+        obj_id = context.user_data.get("obj_id")
+
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO comments (object_id, text) VALUES (%s,%s)",
+                (obj_id, text)
+            )
+            conn.commit()
+
+        context.user_data.clear()
+        await update.message.reply_text("✅ Комментарий добавлен")
+        return
+
+    
     if context.user_data.get("link_mode"):
         obj_id = context.user_data["obj_id"]
         context.user_data.clear()
@@ -408,30 +424,6 @@ async def vote_handler(update, context):
 
     await q.answer("✅")
 
-async def open_tags(update, context):
-    q = update.callback_query
-    await q.answer()
-
-async def add_tag(update, context):
-    q = update.callback_query
-    _, obj_id, tag = q.data.split("|")
-
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO tag_voters VALUES (%s,%s) ON CONFLICT DO NOTHING",
-            (q.from_user.id, obj_id)
-        )
-        if cur.rowcount == 0:
-            await q.answer("❌ Уже добавляли", show_alert=True)
-            return
-        cur.execute(
-            "INSERT INTO tags VALUES (%s,%s,1) "
-            "ON CONFLICT (object_id,tag) DO UPDATE SET count=tags.count+1",
-            (obj_id, tag)
-        )
-        conn.commit()
-
-    await q.answer("✅")
 
 async def link_button(update, context):
     q = update.callback_query
@@ -462,4 +454,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
