@@ -115,13 +115,22 @@ def format_rating(score):
 
 def main_keyboard(obj_id):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("👍 +1", callback_data=f"vote|{obj_id}|1"),
-         InlineKeyboardButton("👎 -1", callback_data=f"vote|{obj_id}|-1")],
-        [InlineKeyboardButton("🏷 Теги", callback_data=f"tags|{obj_id}")],
-        [InlineKeyboardButton("💬 Комментарий", callback_data=f"comment|{obj_id}"),
-         InlineKeyboardButton("📖 Комментарии", callback_data=f"view|{obj_id}")],
-        [InlineKeyboardButton("➕ Связать объект", callback_data=f"link|{obj_id}")]
+        [
+            InlineKeyboardButton("👍 +1", callback_data=f"vote|{obj_id}|1"),
+            InlineKeyboardButton("👎 -1", callback_data=f"vote|{obj_id}|-1"),
+        ],
+        [
+            InlineKeyboardButton("🏷 Теги", callback_data=f"tags|{obj_id}")
+        ],
+        [
+            InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"comment|{obj_id}"),
+            InlineKeyboardButton("📖 Смотреть комментарии", callback_data=f"view|{obj_id}")
+        ],
+        [
+            InlineKeyboardButton("➕ Связать объект", callback_data=f"link|{obj_id}")
+        ]
     ])
+
 
 def tags_keyboard(obj_id):
     rows, row = [], []
@@ -255,6 +264,132 @@ async def link_object(obj_id, text, update):
 
 # ================= CALLBACKS =================
 
+async def open_tags(update, context):
+    q = update.callback_query
+    _, obj_id = q.data.split("|")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+        title, score = cur.fetchone()
+        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
+        tags = cur.fetchall()
+
+    tag_text = "\n".join(
+        f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags
+    ) or "—"
+
+    await q.edit_message_text(
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🏷 Теги:\n{tag_text}",
+        reply_markup=tags_keyboard(obj_id)
+    )
+
+
+async def add_tag(update, context):
+    q = update.callback_query
+    _, obj_id, tag = q.data.split("|")
+    user_id = q.from_user.id
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO tag_voters (user_id, object_id) VALUES (%s,%s) "
+            "ON CONFLICT DO NOTHING",
+            (user_id, obj_id)
+        )
+        if cur.rowcount == 0:
+            await q.answer("❌ Вы уже добавляли тег", show_alert=True)
+            return
+
+        cur.execute(
+            "INSERT INTO tags (object_id, tag, count) VALUES (%s,%s,1) "
+            "ON CONFLICT (object_id, tag) DO UPDATE SET count = tags.count + 1",
+            (obj_id, tag)
+        )
+
+        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+        title, score = cur.fetchone()
+        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
+        tags = cur.fetchall()
+
+        conn.commit()
+
+    tag_text = "\n".join(
+        f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags
+    )
+
+    await q.edit_message_text(
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🏷 Теги:\n{tag_text}",
+        reply_markup=main_keyboard(obj_id)
+    )
+
+    await q.answer("✅ Тег добавлен")
+
+
+async def comment_button(update, context):
+    q = update.callback_query
+    _, obj_id = q.data.split("|")
+
+    context.user_data["comment_mode"] = True
+    context.user_data["obj_id"] = obj_id
+
+    await q.edit_message_text(
+        "💬 Напишите комментарий\n\n⚠️ Анонимно",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Отмена", callback_data=f"back|{obj_id}")]
+        ])
+    )
+
+
+async def view_comments(update, context):
+    q = update.callback_query
+    _, obj_id = q.data.split("|")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT text FROM comments WHERE object_id=%s ORDER BY id DESC LIMIT 10",
+            (obj_id,)
+        )
+        comments = cur.fetchall()
+
+    text = (
+        "💬 Комментарии:\n\n" +
+        "\n\n".join(f"• {c[0]}" for c in comments)
+        if comments else "💬 Комментариев нет"
+    )
+
+    await q.edit_message_text(
+        text,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⬅️ Назад", callback_data=f"back|{obj_id}")]
+        ])
+    )
+
+
+async def back_handler(update, context):
+    q = update.callback_query
+    _, obj_id = q.data.split("|")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+        title, score = cur.fetchone()
+        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
+        tags = cur.fetchall()
+
+    tag_text = "\n".join(
+        f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags
+    ) or "—"
+
+    await q.edit_message_text(
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🏷 Теги:\n{tag_text}",
+        reply_markup=main_keyboard(obj_id)
+    )
+
+
 async def vote_handler(update, context):
     q = update.callback_query
     _, obj_id, val = q.data.split("|")
@@ -315,10 +450,16 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     app.add_handler(CallbackQueryHandler(vote_handler, pattern="^vote"))
+    app.add_handler(CallbackQueryHandler(open_tags, pattern="^tags"))
     app.add_handler(CallbackQueryHandler(add_tag, pattern="^tag"))
+    app.add_handler(CallbackQueryHandler(comment_button, pattern="^comment"))
+    app.add_handler(CallbackQueryHandler(view_comments, pattern="^view"))
+    app.add_handler(CallbackQueryHandler(back_handler, pattern="^back"))
     app.add_handler(CallbackQueryHandler(link_button, pattern="^link"))
+
 
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
