@@ -3,11 +3,7 @@ import re
 import logging
 import psycopg2
 from urllib.parse import urlparse
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -49,15 +45,15 @@ def get_conn():
 def init_db():
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id BIGINT PRIMARY KEY
-        );
+        CREATE TABLE IF NOT EXISTS users (id BIGINT PRIMARY KEY);
+
         CREATE TABLE IF NOT EXISTS objects (
             id SERIAL PRIMARY KEY,
             key TEXT UNIQUE,
             title TEXT,
             score INT DEFAULT 0
         );
+
         CREATE TABLE IF NOT EXISTS object_links (
             id SERIAL PRIMARY KEY,
             object_id INT REFERENCES objects(id) ON DELETE CASCADE,
@@ -65,23 +61,27 @@ def init_db():
             value TEXT,
             UNIQUE(type, value)
         );
+
         CREATE TABLE IF NOT EXISTS votes (
             user_id BIGINT,
             object_id INT,
             value INT,
             UNIQUE(user_id, object_id)
         );
+
         CREATE TABLE IF NOT EXISTS tags (
             object_id INT,
             tag TEXT,
             count INT DEFAULT 1,
             UNIQUE(object_id, tag)
         );
+
         CREATE TABLE IF NOT EXISTS tag_voters (
             user_id BIGINT,
             object_id INT,
             UNIQUE(user_id, object_id)
         );
+
         CREATE TABLE IF NOT EXISTS comments (
             id SERIAL PRIMARY KEY,
             object_id INT,
@@ -93,55 +93,43 @@ def init_db():
 # ================= УТИЛИТЫ =================
 
 def normalize_phone(text):
-    digits = re.sub(r"\D", "", text)
-    if len(digits) == 11 and digits.startswith("8"):
-        digits = "7" + digits[1:]
-    if len(digits) == 11 and digits.startswith("7"):
-        return f"+{digits}"
-    if len(digits) == 10:
-        return f"+7{digits}"
+    d = re.sub(r"\D", "", text)
+    if len(d) == 11 and d.startswith("8"):
+        d = "7" + d[1:]
+    if len(d) == 11 and d.startswith("7"):
+        return f"+{d}"
+    if len(d) == 10:
+        return f"+7{d}"
     return None
 
 def normalize_vk(text):
-    m = re.match(r"(https?://)?(www\.)?vk\.com/([\w\d_.]+)", text)
+    m = re.match(r"^(https?://)?(www\.)?vk\.com/([\w\d_.]+)$", text)
     return m.group(3).lower() if m else None
 
 def format_rating(score):
-    if score > 0:
-        return f"👍 {score}"
-    if score < 0:
-        return f"👎 {score}"
-    return "➖ 0"
+    if score > 0: return f"👍 {score}"
+    if score < 0: return f"👎 {score}"
+    return f"➖ {score}"
 
 # ================= КЛАВИАТУРЫ =================
 
 def main_keyboard(obj_id):
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("👍 +1", callback_data=f"vote|{obj_id}|1"),
-            InlineKeyboardButton("👎 -1", callback_data=f"vote|{obj_id}|-1"),
-        ],
-        [
-            InlineKeyboardButton("💬 Добавить комментарий", callback_data=f"comment|{obj_id}"),
-            InlineKeyboardButton("📖 Смотреть комментарии", callback_data=f"view|{obj_id}"),
-        ],
-        [
-            InlineKeyboardButton("🏷 Теги", callback_data=f"tags|{obj_id}"),
-            InlineKeyboardButton("🔗 Связать", callback_data=f"link|{obj_id}"),
-        ],
+        [InlineKeyboardButton("👍 +1", callback_data=f"vote|{obj_id}|1"),
+         InlineKeyboardButton("👎 -1", callback_data=f"vote|{obj_id}|-1")],
+        [InlineKeyboardButton("🏷 Теги", callback_data=f"tags|{obj_id}")],
+        [InlineKeyboardButton("💬 Комментарий", callback_data=f"comment|{obj_id}"),
+         InlineKeyboardButton("📖 Комментарии", callback_data=f"view|{obj_id}")],
+        [InlineKeyboardButton("➕ Связать объект", callback_data=f"link|{obj_id}")]
     ])
 
 def tags_keyboard(obj_id):
     rows, row = [], []
-    for tag, emoji in TAG_EMOJIS.items():
-        row.append(InlineKeyboardButton(
-            f"{emoji} {tag}", callback_data=f"tag|{obj_id}|{tag}"
-        ))
+    for t, e in TAG_EMOJIS.items():
+        row.append(InlineKeyboardButton(f"{e} {t}", callback_data=f"tag|{obj_id}|{t}"))
         if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
+            rows.append(row); row = []
+    if row: rows.append(row)
     rows.append([InlineKeyboardButton("⬅️ Назад", callback_data=f"back|{obj_id}")])
     return InlineKeyboardMarkup(rows)
 
@@ -149,265 +137,173 @@ def tags_keyboard(obj_id):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO users (id) VALUES (%s) ON CONFLICT DO NOTHING",
-            (update.effective_user.id,)
-        )
+        cur.execute("INSERT INTO users VALUES (%s) ON CONFLICT DO NOTHING",
+                    (update.effective_user.id,))
         conn.commit()
 
     await update.message.reply_text(
         "👋 Добро пожаловать\n\n"
         "Отправь:\n"
-        "• @username\n"
-        "• ссылку t.me\n"
-        "• ссылку VK\n"
-        "• номер телефона +79998887766\n\n"
-        "Голосуй 👍👎, добавляй теги и комментарии"
+        "• номер телефона\n"
+        "• @username или t.me\n"
+        "• ссылку VK\n\n"
+        "Можно голосовать, добавлять теги, комментарии и связывать объекты."
     )
 
-# ================= ОБРАБОТКА ТЕКСТА =================
+# ================= TEXT =================
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
-    # комментарий
-    if context.user_data.get("comment_mode"):
-        obj_id = context.user_data.pop("obj_id")
-        context.user_data.pop("comment_mode", None)
-
-        with get_conn() as conn, conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO comments (object_id, text) VALUES (%s,%s)",
-                (obj_id, text)
-            )
-            conn.commit()
-
-        await update.message.reply_text("✅ Комментарий добавлен")
-        return
-
-    # привязка
     if context.user_data.get("link_mode"):
-        base_obj_id = context.user_data.pop("link_mode")
-        await process_object(update, text, base_obj_id)
+        obj_id = context.user_data["obj_id"]
+        context.user_data.clear()
+        await link_object(obj_id, text, update)
         return
 
-    await process_object(update, text)
-
-# ================= ОБЪЕКТ =================
-
-async def process_object(update, text, base_obj_id=None):
     phone = normalize_phone(text)
     vk = normalize_vk(text)
-    tg = text.lower() if text.startswith("@") or "t.me" in text else None
 
     if phone:
-        link_type, value, title = "phone", phone, phone
+        ltype, lval, title = "phone", phone, phone
     elif vk:
-        link_type, value, title = "vk", vk, f"https://vk.com/{vk}"
-    elif tg:
-        link_type, value, title = "tg", tg, tg
+        ltype, lval, title = "vk", vk, f"https://vk.com/{vk}"
+    elif text.startswith("@") or "t.me" in text:
+        ltype, lval, title = "tg", text.lower(), text
+    else:
+        await update.message.reply_text("❌ Неподдерживаемый формат")
+        return
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT object_id FROM object_links WHERE type=%s AND value=%s",
+                    (ltype, lval))
+        row = cur.fetchone()
+
+        if row:
+            obj_id = row[0]
+        else:
+            cur.execute("SELECT id FROM objects WHERE key=%s",
+                        (f"{ltype}:{lval}",))
+            old = cur.fetchone()
+            if old:
+                obj_id = old[0]
+            else:
+                cur.execute(
+                    "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
+                    (f"{ltype}:{lval}", title)
+                )
+                obj_id = cur.fetchone()[0]
+
+            cur.execute(
+                "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s) "
+                "ON CONFLICT DO NOTHING",
+                (obj_id, ltype, lval)
+            )
+
+        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+        title, score = cur.fetchone()
+
+        cur.execute("SELECT type, value FROM object_links WHERE object_id=%s", (obj_id,))
+        links = cur.fetchall()
+
+        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
+        tags = cur.fetchall()
+
+        conn.commit()
+
+    links_text = "\n".join(
+        f"• {t}: {v}" for t, v in links
+    ) or "—"
+
+    tags_text = "\n".join(
+        f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags
+    ) or "—"
+
+    await update.message.reply_text(
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🔗 Связанные данные:\n{links_text}\n\n"
+        f"🏷 Теги:\n{tags_text}",
+        reply_markup=main_keyboard(obj_id)
+    )
+
+# ================= LINK =================
+
+async def link_object(obj_id, text, update):
+    phone = normalize_phone(text)
+    vk = normalize_vk(text)
+
+    if phone:
+        ltype, lval = "phone", phone
+    elif vk:
+        ltype, lval = "vk", vk
+    elif text.startswith("@") or "t.me" in text:
+        ltype, lval = "tg", text.lower()
     else:
         await update.message.reply_text("❌ Неверный формат")
         return
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT object_id FROM object_links WHERE type=%s AND value=%s",
-            (link_type, value)
+            "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s) "
+            "ON CONFLICT DO NOTHING",
+            (obj_id, ltype, lval)
         )
-        row = cur.fetchone()
-
-        if row:
-            obj_id = row[0]
-        else:
-            if base_obj_id:
-                obj_id = base_obj_id
-            else:
-                cur.execute(
-                    "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
-                    (f"{link_type}:{value}", title)
-                )
-                obj_id = cur.fetchone()[0]
-
-            cur.execute(
-                "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
-                (obj_id, link_type, value)
-            )
-
-        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
-        title, score = cur.fetchone()
-
-        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
-        tags = cur.fetchall()
-
         conn.commit()
 
-    tag_text = (
-        "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags)
-        if tags else "—"
-    )
-
-    await update.message.reply_text(
-        f"⭐ Объект:\n{title}\n\n"
-        f"Рейтинг: {format_rating(score)}\n\n"
-        f"🏷 Теги:\n{tag_text}",
-        reply_markup=main_keyboard(obj_id)
-    )
+    await update.message.reply_text("✅ Объект связан")
 
 # ================= CALLBACKS =================
 
 async def vote_handler(update, context):
     q = update.callback_query
-    _, obj_id, value = q.data.split("|")
-    value = int(value)
-    user_id = q.from_user.id
+    _, obj_id, val = q.data.split("|")
+    val = int(val)
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO votes (user_id, object_id, value) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
-            (user_id, obj_id, value)
+            "INSERT INTO votes VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+            (q.from_user.id, obj_id, val)
         )
         if cur.rowcount == 0:
-            await q.answer("❌ Вы уже голосовали", show_alert=True)
+            await q.answer("❌ Уже голосовали", show_alert=True)
             return
-
-        cur.execute(
-            "UPDATE objects SET score = score + %s WHERE id=%s",
-            (value, obj_id)
-        )
-
-        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
-        title, score = cur.fetchone()
-
-        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
-        tags = cur.fetchall()
+        cur.execute("UPDATE objects SET score = score + %s WHERE id=%s", (val, obj_id))
         conn.commit()
 
-    tag_text = "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags) or "—"
-
-    await q.edit_message_text(
-        f"⭐ Объект:\n{title}\n\n"
-        f"Рейтинг: {format_rating(score)}\n\n"
-        f"🏷 Теги:\n{tag_text}",
-        reply_markup=main_keyboard(obj_id)
-    )
-    await q.answer("✅ Голос учтён")
+    await q.answer("✅")
 
 async def open_tags(update, context):
     q = update.callback_query
-    _, obj_id = q.data.split("|")
-
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
-        title, score = cur.fetchone()
-        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
-        tags = cur.fetchall()
-
-    tag_text = "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags) or "—"
-
-    await q.edit_message_text(
-        f"⭐ Объект:\n{title}\n\n"
-        f"Рейтинг: {format_rating(score)}\n\n"
-        f"🏷 Теги:\n{tag_text}",
-        reply_markup=tags_keyboard(obj_id)
-    )
+    await q.answer()
 
 async def add_tag(update, context):
     q = update.callback_query
     _, obj_id, tag = q.data.split("|")
-    user_id = q.from_user.id
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO tag_voters (user_id, object_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
-            (user_id, obj_id)
+            "INSERT INTO tag_voters VALUES (%s,%s) ON CONFLICT DO NOTHING",
+            (q.from_user.id, obj_id)
         )
         if cur.rowcount == 0:
-            await q.answer("❌ Вы уже добавляли тег", show_alert=True)
+            await q.answer("❌ Уже добавляли", show_alert=True)
             return
-
         cur.execute(
-            "INSERT INTO tags (object_id, tag, count) VALUES (%s,%s,1) "
-            "ON CONFLICT (object_id, tag) DO UPDATE SET count = tags.count + 1",
+            "INSERT INTO tags VALUES (%s,%s,1) "
+            "ON CONFLICT (object_id,tag) DO UPDATE SET count=tags.count+1",
             (obj_id, tag)
         )
-
-        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
-        title, score = cur.fetchone()
-        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
-        tags = cur.fetchall()
         conn.commit()
 
-    tag_text = "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags)
-
-    await q.edit_message_text(
-        f"⭐ Объект:\n{title}\n\n"
-        f"Рейтинг: {format_rating(score)}\n\n"
-        f"🏷 Теги:\n{tag_text}",
-        reply_markup=main_keyboard(obj_id)
-    )
-    await q.answer("✅ Тег добавлен")
-
-async def back_handler(update, context):
-    q = update.callback_query
-    _, obj_id = q.data.split("|")
-
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
-        title, score = cur.fetchone()
-        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
-        tags = cur.fetchall()
-
-    tag_text = "\n".join(f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags) or "—"
-
-    await q.edit_message_text(
-        f"⭐ Объект:\n{title}\n\n"
-        f"Рейтинг: {format_rating(score)}\n\n"
-        f"🏷 Теги:\n{tag_text}",
-        reply_markup=main_keyboard(obj_id)
-    )
-
-async def comment_button(update, context):
-    q = update.callback_query
-    _, obj_id = q.data.split("|")
-    context.user_data["comment_mode"] = True
-    context.user_data["obj_id"] = obj_id
-
-    await q.edit_message_text(
-        "💬 Напишите комментарий\n\n⚠️ Анонимно",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Отмена", callback_data=f"back|{obj_id}")]
-        ])
-    )
-
-async def view_comments(update, context):
-    q = update.callback_query
-    _, obj_id = q.data.split("|")
-
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "SELECT text FROM comments WHERE object_id=%s ORDER BY id DESC LIMIT 10",
-            (obj_id,)
-        )
-        comments = cur.fetchall()
-
-    text = (
-        "💬 Комментарии:\n\n" + "\n\n".join(f"• {c[0]}" for c in comments)
-        if comments else "💬 Комментариев нет"
-    )
-
-    await q.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⬅️ Назад", callback_data=f"back|{obj_id}")]
-        ])
-    )
+    await q.answer("✅")
 
 async def link_button(update, context):
     q = update.callback_query
     _, obj_id = q.data.split("|")
-    context.user_data["link_mode"] = int(obj_id)
-    await q.edit_message_text("🔗 Отправь данные для привязки")
+    context.user_data["link_mode"] = True
+    context.user_data["obj_id"] = obj_id
+    await q.edit_message_text("➕ Отправьте данные для связи")
 
 # ================= MAIN =================
 
@@ -419,11 +315,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
     app.add_handler(CallbackQueryHandler(vote_handler, pattern="^vote"))
-    app.add_handler(CallbackQueryHandler(open_tags, pattern="^tags"))
     app.add_handler(CallbackQueryHandler(add_tag, pattern="^tag"))
-    app.add_handler(CallbackQueryHandler(back_handler, pattern="^back"))
-    app.add_handler(CallbackQueryHandler(comment_button, pattern="^comment"))
-    app.add_handler(CallbackQueryHandler(view_comments, pattern="^view"))
     app.add_handler(CallbackQueryHandler(link_button, pattern="^link"))
 
     app.run_polling()
