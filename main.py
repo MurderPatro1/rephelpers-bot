@@ -248,7 +248,7 @@ else:
         (obj_id, ltype, lval)
     )
 
-        row = cur.fetchone()
+    row = cur.fetchone()
 
 
         if row:
@@ -583,6 +583,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
