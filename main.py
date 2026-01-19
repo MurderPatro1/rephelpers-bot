@@ -233,22 +233,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     row = cur.fetchone()
 
-if row:
-    obj_id = row[0]
-else:
-    # 2. Если не нашли — создаём новый объект
-    cur.execute(
-        "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
-        (f"{ltype}:{lval}", title)
-    )
-    obj_id = cur.fetchone()[0]
+    if row:
+        obj_id = row[0]
+    else:
+        # 2. Если не нашли — создаём новый объект
+        cur.execute(
+            "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
+            (f"{ltype}:{lval}", title)
+        )
+        obj_id = cur.fetchone()[0]
 
-    cur.execute(
-        "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
-        (obj_id, ltype, lval)
-    )
+        cur.execute(
+            "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
+            (obj_id, ltype, lval)
+        )
 
-    row = cur.fetchone()
+        row = cur.fetchone()
 
 
         if row:
@@ -583,6 +583,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
