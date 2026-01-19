@@ -276,7 +276,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ON CONFLICT DO NOTHING
         """, (obj_id, ltype, lval))
         
-          )
 
         # 3. читаем данные
         cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
@@ -594,6 +593,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
