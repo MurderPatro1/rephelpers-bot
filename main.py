@@ -2,6 +2,7 @@ import os
 import re
 import logging
 import psycopg2
+import uuid
 from urllib.parse import urlparse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -248,46 +249,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== DB LOGIC =====
     with get_conn() as conn, conn.cursor() as cur:
-       # 1. ищем объект по key И по связям
+
         cur.execute("""
-            SELECT o.id
-            FROM objects o
-            LEFT JOIN object_links l ON l.object_id = o.id
-            WHERE o.key = %s OR (l.type = %s AND l.value = %s)
+            SELECT object_id
+            FROM object_links
+            WHERE type = %s AND value = %s
             LIMIT 1
-        """, (f"{ltype}:{lval}", ltype, lval))
+        """, (ltype, lval))
 
         row = cur.fetchone()
 
         if row:
             obj_id = row[0]
         else:
-            # 2. создаём объект
             cur.execute(
                 "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
-                (f"{ltype}:{lval}", title)
+                (str(uuid.uuid4()), title)
             )
             obj_id = cur.fetchone()[0]
 
-# 3. ГАРАНТИРУЕМ наличие основной связи
-        cur.execute("""
-            INSERT INTO object_links (object_id, type, value)
-            VALUES (%s,%s,%s)
-            ON CONFLICT DO NOTHING
-        """, (obj_id, ltype, lval))
-        
-
-        # 3. читаем данные
-        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
-        title, score = cur.fetchone()
-
-        cur.execute("SELECT type, value FROM object_links WHERE object_id=%s", (obj_id,))
-        links = cur.fetchall()
-
-        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
-        tags = cur.fetchall()
+            cur.execute("""
+                INSERT INTO object_links (object_id, type, value)
+                VALUES (%s,%s,%s)
+            """, (obj_id, ltype, lval))
 
         conn.commit()
+
 
     # ===== RENDER =====
     links_text = "\n".join(
@@ -324,39 +311,31 @@ async def link_object(obj_id, text, update):
         await update.message.reply_text("❌ Неверный формат")
         return
 
-
     with get_conn() as conn, conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s) "
-            "ON CONFLICT DO NOTHING",
-            (obj_id, ltype, lval)
-        )
+        # Проверяем, не привязано ли уже к другому объекту
+        cur.execute("""
+            SELECT object_id
+            FROM object_links
+            WHERE type=%s AND value=%s
+        """, (ltype, lval))
+
+        row = cur.fetchone()
+
+        if row and row[0] != obj_id:
+            await update.message.reply_text(
+                "❌ Эти данные уже привязаны к другому объекту"
+            )
+            return
+
+        cur.execute("""
+            INSERT INTO object_links (object_id, type, value)
+            VALUES (%s,%s,%s)
+            ON CONFLICT DO NOTHING
+        """, (obj_id, ltype, lval))
+
         conn.commit()
 
     await update.message.reply_text("✅ Объект связан")
-
-# ================= CALLBACKS =================
-
-async def open_tags(update, context):
-    q = update.callback_query
-    _, obj_id = q.data.split("|")
-
-    with get_conn() as conn, conn.cursor() as cur:
-        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
-        title, score = cur.fetchone()
-        cur.execute("SELECT tag, count FROM tags WHERE object_id=%s", (obj_id,))
-        tags = cur.fetchall()
-
-    tag_text = "\n".join(
-        f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags
-    ) or "—"
-
-    await q.edit_message_text(
-        f"⭐ Объект:\n{title}\n\n"
-        f"Рейтинг: {format_rating(score)}\n\n"
-        f"🏷 Теги:\n{tag_text}",
-        reply_markup=tags_keyboard(obj_id)
-    )
 
 
 async def add_tag(update, context):
@@ -593,6 +572,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
