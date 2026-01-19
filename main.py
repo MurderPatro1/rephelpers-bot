@@ -387,7 +387,7 @@ async def link_object(obj_id, text, update):
             cur.execute("DELETE FROM objects WHERE id = %s", (old_obj_id,))
 
 
-           cur.execute("""
+        cur.execute("""
             INSERT INTO object_links (object_id, type, value)
             VALUES (%s,%s,%s)
             ON CONFLICT DO NOTHING
@@ -632,6 +632,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
