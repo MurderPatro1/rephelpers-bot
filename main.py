@@ -125,6 +125,18 @@ def normalize_phone(text):
         return f"+7{d}"
     return None
 
+def normalize_tg(text):
+    text = text.lower().strip()
+
+    if text.startswith("https://t.me/"):
+        return text.replace("https://t.me/", "")
+    if text.startswith("t.me/"):
+        return text.replace("t.me/", "")
+    if text.startswith("@"):
+        return text[1:]
+    return None
+
+
 def normalize_vk(text):
     text = text.strip()
 
@@ -227,22 +239,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ltype, lval, title = "phone", phone, phone
     elif vk:
         ltype, lval, title = "vk", vk, f"https://vk.ru/{vk}"
-    elif text.startswith("@") or "t.me" in text:
-        ltype, lval, title = "tg", text.lower(), text
+    tg = normalize_tg(text)
+    if tg:
+        ltype, lval, title = "tg", tg, f"@{tg}"
     else:
         await update.message.reply_text("❌ Неподдерживаемый формат")
         return
 
     # ===== DB LOGIC =====
     with get_conn() as conn, conn.cursor() as cur:
-
-        # 1. ищем объект через связи
+       # 1. ищем объект по key И по связям
         cur.execute("""
-            SELECT object_id
-            FROM object_links
-            WHERE type = %s AND value = %s
+            SELECT o.id
+            FROM objects o
+            LEFT JOIN object_links l ON l.object_id = o.id
+            WHERE o.key = %s OR (l.type = %s AND l.value = %s)
             LIMIT 1
-        """, (ltype, lval))
+        """, (f"{ltype}:{lval}", ltype, lval))
+
         row = cur.fetchone()
 
         if row:
@@ -255,10 +269,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             obj_id = cur.fetchone()[0]
 
-            cur.execute(
-                "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
-                (obj_id, ltype, lval)
-            )
+# 3. ГАРАНТИРУЕМ наличие основной связи
+        cur.execute("""
+            INSERT INTO object_links (object_id, type, value)
+            VALUES (%s,%s,%s)
+            ON CONFLICT DO NOTHING
+        """, (obj_id, ltype, lval))
+        
+        cur.execute(
+             "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
+             (obj_id, ltype, lval)
+          )
 
         # 3. читаем данные
         cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
@@ -300,8 +321,9 @@ async def link_object(obj_id, text, update):
         ltype, lval = "phone", phone
     elif vk:
         ltype, lval = "vk", vk
-    elif text.startswith("@") or "t.me" in text:
-        ltype, lval = "tg", text.lower()
+    tg = normalize_tg(text)
+    if tg:
+        ltype, lval = "tg", tg
     else:
         await update.message.reply_text("❌ Неверный формат")
         return
@@ -574,6 +596,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
