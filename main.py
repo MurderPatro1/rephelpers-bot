@@ -223,13 +223,31 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     with get_conn() as conn, conn.cursor() as cur:
+        # 1. Ищем объект ТОЛЬКО через связи
         cur.execute("""
-            SELECT o.id
-            FROM objects o
-            LEFT JOIN object_links l ON l.object_id = o.id
-            WHERE o.key = %s OR (l.type = %s AND l.value = %s)
+            SELECT object_id
+            FROM object_links
+            WHERE type = %s AND value = %s
             LIMIT 1
-        """, (f"{ltype}:{lval}", ltype, lval))
+        """, (ltype, lval))
+
+    row = cur.fetchone()
+
+if row:
+    obj_id = row[0]
+else:
+    # 2. Если не нашли — создаём новый объект
+    cur.execute(
+        "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
+        (f"{ltype}:{lval}", title)
+    )
+    obj_id = cur.fetchone()[0]
+
+    cur.execute(
+        "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
+        (obj_id, ltype, lval)
+    )
+
         row = cur.fetchone()
 
 
@@ -565,6 +583,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
