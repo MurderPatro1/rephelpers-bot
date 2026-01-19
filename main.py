@@ -126,8 +126,19 @@ def normalize_phone(text):
     return None
 
 def normalize_vk(text):
-    m = re.match(r"^(https?://)?(www\.)?vk\.com/([\w\d_.]+)$", text)
-    return m.group(3).lower() if m else None
+    text = text.strip()
+
+    m = re.match(
+        r"^(https?://)?(www\.|m\.)?(vk\.com|vk\.ru)/([\w\d_.]+)$",
+        text,
+        re.IGNORECASE
+    )
+
+    if not m:
+        return None
+
+    return m.group(4).lower()
+
 
 def format_rating(score):
     if score > 0: return f"👍 {score}"
@@ -215,7 +226,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if phone:
         ltype, lval, title = "phone", phone, phone
     elif vk:
-        ltype, lval, title = "vk", vk, f"https://vk.com/{vk}"
+        ltype, lval, title = "vk", vk, f"https://vk.ru/{vk}"
     elif text.startswith("@") or "t.me" in text:
         ltype, lval, title = "tg", text.lower(), text
     else:
@@ -563,6 +574,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
