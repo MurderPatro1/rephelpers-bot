@@ -234,13 +234,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== NORMALIZE INPUT =====
     phone = normalize_phone(text)
     vk = normalize_vk(text)
+    tg = normalize_tg(text)
 
     if phone:
         ltype, lval, title = "phone", phone, phone
     elif vk:
         ltype, lval, title = "vk", vk, f"https://vk.ru/{vk}"
-    tg = normalize_tg(text)
-    if tg:
+    elif tg:
         ltype, lval, title = "tg", tg, f"@{tg}"
     else:
         await update.message.reply_text("❌ Неподдерживаемый формат")
@@ -276,9 +276,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ON CONFLICT DO NOTHING
         """, (obj_id, ltype, lval))
         
-        cur.execute(
-             "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
-             (obj_id, ltype, lval)
           )
 
         # 3. читаем данные
@@ -316,17 +313,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def link_object(obj_id, text, update):
     phone = normalize_phone(text)
     vk = normalize_vk(text)
+    tg = normalize_tg(text)
 
     if phone:
         ltype, lval = "phone", phone
     elif vk:
         ltype, lval = "vk", vk
-    tg = normalize_tg(text)
-    if tg:
+    elif tg:
         ltype, lval = "tg", tg
     else:
         await update.message.reply_text("❌ Неверный формат")
         return
+
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
@@ -596,6 +594,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
