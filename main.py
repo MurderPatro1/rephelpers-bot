@@ -275,6 +275,21 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn.commit()
 
+        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+        title, score = cur.fetchone()
+
+        cur.execute(
+            "SELECT type, value FROM object_links WHERE object_id=%s",
+            (obj_id,)
+        )
+        links = cur.fetchall()
+
+        cur.execute(
+            "SELECT tag, count FROM tags WHERE object_id=%s",
+            (obj_id,)
+        )
+        tags = cur.fetchall()
+
 
     # ===== RENDER =====
     links_text = "\n".join(
@@ -295,6 +310,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ================= LINK =================
+
+async def open_tags(update, context):
+    q = update.callback_query
+    _, obj_id = q.data.split("|")
+
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
+        title, score = cur.fetchone()
+
+        cur.execute(
+            "SELECT tag, count FROM tags WHERE object_id=%s",
+            (obj_id,)
+        )
+        tags = cur.fetchall()
+
+    tag_text = "\n".join(
+        f"{TAG_EMOJIS.get(t,'🏷')} {t} — {c}" for t, c in tags
+    ) or "—"
+
+    await q.edit_message_text(
+        f"⭐ Объект:\n{title}\n\n"
+        f"Рейтинг: {format_rating(score)}\n\n"
+        f"🏷 Теги:\n{tag_text}",
+        reply_markup=tags_keyboard(obj_id)
+    )
+
 
 async def link_object(obj_id, text, update):
     phone = normalize_phone(text)
@@ -572,6 +613,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
