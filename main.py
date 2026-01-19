@@ -189,8 +189,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== COMMENT MODE =====
     if context.user_data.get("comment_mode"):
-        obj_id = context.user_data.get("obj_id")
-
+        obj_id = context.user_data["obj_id"]
         with get_conn() as conn, conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO comments (object_id, text) VALUES (%s,%s)",
@@ -202,13 +201,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Комментарий добавлен")
         return
 
-    
+    # ===== LINK MODE =====
     if context.user_data.get("link_mode"):
         obj_id = context.user_data["obj_id"]
         context.user_data.clear()
         await link_object(obj_id, text, update)
         return
 
+    # ===== NORMALIZE INPUT =====
     phone = normalize_phone(text)
     vk = normalize_vk(text)
 
@@ -222,56 +222,34 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Неподдерживаемый формат")
         return
 
+    # ===== DB LOGIC =====
     with get_conn() as conn, conn.cursor() as cur:
-        # 1. Ищем объект ТОЛЬКО через связи
+
+        # 1. ищем объект через связи
         cur.execute("""
             SELECT object_id
             FROM object_links
             WHERE type = %s AND value = %s
             LIMIT 1
         """, (ltype, lval))
-
-    row = cur.fetchone()
-
-    if row:
-        obj_id = row[0]
-    else:
-        # 2. Если не нашли — создаём новый объект
-        cur.execute(
-            "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
-            (f"{ltype}:{lval}", title)
-        )
-        obj_id = cur.fetchone()[0]
-
-        cur.execute(
-            "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
-            (obj_id, ltype, lval)
-        )
-
         row = cur.fetchone()
-
 
         if row:
             obj_id = row[0]
         else:
-            cur.execute("SELECT id FROM objects WHERE key=%s",
-                        (f"{ltype}:{lval}",))
-            old = cur.fetchone()
-            if old:
-                obj_id = old[0]
-            else:
-                cur.execute(
-                    "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
-                    (f"{ltype}:{lval}", title)
-                )
-                obj_id = cur.fetchone()[0]
+            # 2. создаём объект
+            cur.execute(
+                "INSERT INTO objects (key, title) VALUES (%s,%s) RETURNING id",
+                (f"{ltype}:{lval}", title)
+            )
+            obj_id = cur.fetchone()[0]
 
             cur.execute(
-                "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s) "
-                "ON CONFLICT DO NOTHING",
+                "INSERT INTO object_links (object_id, type, value) VALUES (%s,%s,%s)",
                 (obj_id, ltype, lval)
             )
 
+        # 3. читаем данные
         cur.execute("SELECT title, score FROM objects WHERE id=%s", (obj_id,))
         title, score = cur.fetchone()
 
@@ -283,6 +261,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         conn.commit()
 
+    # ===== RENDER =====
     links_text = "\n".join(
         f"• {t}: {v}" for t, v in links
     ) or "—"
@@ -298,6 +277,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🏷 Теги:\n{tags_text}",
         reply_markup=main_keyboard(obj_id)
     )
+
 
 # ================= LINK =================
 
@@ -583,6 +563,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
