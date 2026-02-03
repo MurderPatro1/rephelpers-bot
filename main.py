@@ -390,65 +390,70 @@ async def link_object(obj_id, text, update):
         await update.message.reply_text("❌ Неверный формат")
         return False
 
-    with get_conn() as conn, conn.cursor() as cur:
-        # Проверяем, не привязано ли уже к другому объекту
-        cur.execute("""
-            SELECT object_id
-            FROM object_links
-            WHERE type=%s AND value=%s
-        """, (ltype, lval))
-
-        row = cur.fetchone()
-
-        if row and row[0] != obj_id:
-            # просто считаем, что это один и тот же объект
-            old_obj_id = row[0]
-
-            cur.execute(
-                "SELECT title, score FROM objects WHERE id = %s",
-                (old_obj_id,)
-            )
-            old_title, old_score = cur.fetchone()
-
+    try:
+        with get_conn() as conn, conn.cursor() as cur:
+            # Проверяем, не привязано ли уже к другому объекту
             cur.execute("""
-                UPDATE object_links
-                SET object_id = %s
-                WHERE object_id = %s
-            """, (obj_id, old_obj_id))
+                SELECT object_id
+                FROM object_links
+                WHERE type=%s AND value=%s
+            """, (ltype, lval))
 
-            cur.execute("""
-                UPDATE votes SET object_id = %s WHERE object_id = %s
-            """, (obj_id, old_obj_id))
+            row = cur.fetchone()
 
-            cur.execute("""
-                UPDATE tags SET object_id = %s WHERE object_id = %s
-            """, (obj_id, old_obj_id))
+            if row and row[0] != obj_id:
+                # просто считаем, что это один и тот же объект
+                old_obj_id = row[0]
 
-            cur.execute("""
-                UPDATE comments SET object_id = %s WHERE object_id = %s
-            """, (obj_id, old_obj_id))
-
-            cur.execute(
-                "UPDATE objects SET score = score + %s WHERE id = %s",
-                (old_score, obj_id)
-            )
-
-            if old_title:
                 cur.execute(
-                    "UPDATE objects SET title = COALESCE(title, %s) WHERE id = %s",
-                    (old_title, obj_id)
+                    "SELECT title, score FROM objects WHERE id = %s",
+                    (old_obj_id,)
+                )
+                old_title, old_score = cur.fetchone()
+
+                cur.execute("""
+                    UPDATE object_links
+                    SET object_id = %s
+                    WHERE object_id = %s
+                """, (obj_id, old_obj_id))
+
+                cur.execute("""
+                    UPDATE votes SET object_id = %s WHERE object_id = %s
+                """, (obj_id, old_obj_id))
+
+                cur.execute("""
+                    UPDATE tags SET object_id = %s WHERE object_id = %s
+                """, (obj_id, old_obj_id))
+
+                cur.execute("""
+                    UPDATE comments SET object_id = %s WHERE object_id = %s
+                """, (obj_id, old_obj_id))
+
+                cur.execute(
+                    "UPDATE objects SET score = score + %s WHERE id = %s",
+                    (old_score, obj_id)
                 )
 
-            cur.execute("DELETE FROM objects WHERE id = %s", (old_obj_id,))
+                if old_title:
+                    cur.execute(
+                        "UPDATE objects SET title = COALESCE(title, %s) WHERE id = %s",
+                        (old_title, obj_id)
+                    )
+
+                cur.execute("DELETE FROM objects WHERE id = %s", (old_obj_id,))
 
 
-        cur.execute("""
-            INSERT INTO object_links (object_id, type, value)
-            VALUES (%s,%s,%s)
-            ON CONFLICT DO NOTHING
-        """, (obj_id, ltype, lval))
+            cur.execute("""
+                INSERT INTO object_links (object_id, type, value)
+                VALUES (%s,%s,%s)
+                ON CONFLICT DO NOTHING
+            """, (obj_id, ltype, lval))
 
-        conn.commit()
+            conn.commit()
+    except Exception:
+        logging.exception("Failed to link object %s with %s:%s", obj_id, ltype, lval)
+        await update.message.reply_text("❌ Ошибка при связывании. Попробуйте ещё раз.")
+        return False
 
     await update.message.reply_text("✅ Объект связан")
     return True
