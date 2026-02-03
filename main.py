@@ -164,16 +164,30 @@ def normalize_tg(text):
 def normalize_vk(text):
     text = text.strip()
 
-    m = re.match(
-        r"^(https?://)?(www\.|m\.)?(vk\.com|vk\.ru)/([\w\d_.]+)$",
-        text,
-        re.IGNORECASE
-    )
+    if text.startswith(("http://", "https://")):
+        parsed = urlparse(text)
+        host = parsed.netloc.lower()
+        if host.startswith(("www.", "m.")):
+            host = host.split(".", 1)[1]
+        if host not in ("vk.com", "vk.ru"):
+            return None
+        path = parsed.path.strip("/")
+    else:
+        text = re.sub(r"^https?://", "", text, flags=re.IGNORECASE)
+        if text.startswith(("www.", "m.")):
+            text = text.split(".", 1)[1]
+        if not text.startswith(("vk.com/", "vk.ru/")):
+            return None
+        path = text.split("/", 1)[1].strip("/")
 
-    if not m:
+    if not path:
         return None
 
-    return m.group(4).lower()
+    username = path.split("/")[0]
+    if not re.match(r"^[\w\d_.]+$", username, re.IGNORECASE):
+        return None
+
+    return username.lower()
 
 
 def format_rating(score):
@@ -251,8 +265,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== LINK MODE =====
     if context.user_data.get("link_mode"):
         obj_id = context.user_data["obj_id"]
-        context.user_data.clear()
-        await link_object(obj_id, text, update)
+        linked = await link_object(obj_id, text, update)
+        if linked:
+            context.user_data.clear()
         return
 
     # ===== NORMALIZE INPUT =====
@@ -373,7 +388,7 @@ async def link_object(obj_id, text, update):
         ltype, lval = "tg", tg
     else:
         await update.message.reply_text("❌ Неверный формат")
-        return
+        return False
 
     with get_conn() as conn, conn.cursor() as cur:
         # Проверяем, не привязано ли уже к другому объекту
@@ -436,6 +451,7 @@ async def link_object(obj_id, text, update):
         conn.commit()
 
     await update.message.reply_text("✅ Объект связан")
+    return True
 
 
 async def add_tag(update, context):
@@ -612,6 +628,7 @@ async def link_button(update, context):
     context.user_data["link_mode"] = True
     context.user_data["obj_id"] = obj_id
     await q.edit_message_text("➕ Отправьте данные для связи")
+    await q.answer()
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
