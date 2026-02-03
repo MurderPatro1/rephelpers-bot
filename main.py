@@ -80,7 +80,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS tag_voters (
             user_id BIGINT,
             object_id INT,
-            UNIQUE(user_id, object_id)
+            tag TEXT,
+            UNIQUE(user_id, object_id, tag)
         );
 
         CREATE TABLE IF NOT EXISTS comments (
@@ -88,6 +89,28 @@ def init_db():
             object_id INT,
             text TEXT
         );
+        """)
+        cur.execute("""
+        ALTER TABLE tag_voters
+        ADD COLUMN IF NOT EXISTS tag TEXT;
+        """)
+        cur.execute("""
+        ALTER TABLE tag_voters
+        DROP CONSTRAINT IF EXISTS tag_voters_user_id_object_id_key;
+        """)
+        cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conname = 'tag_voters_user_id_object_id_tag_key'
+            ) THEN
+                ALTER TABLE tag_voters
+                ADD CONSTRAINT tag_voters_user_id_object_id_tag_key
+                UNIQUE (user_id, object_id, tag);
+            END IF;
+        END $$;
         """)
         conn.commit()
 
@@ -366,6 +389,12 @@ async def link_object(obj_id, text, update):
             # просто считаем, что это один и тот же объект
             old_obj_id = row[0]
 
+            cur.execute(
+                "SELECT title, score FROM objects WHERE id = %s",
+                (old_obj_id,)
+            )
+            old_title, old_score = cur.fetchone()
+
             cur.execute("""
                 UPDATE object_links
                 SET object_id = %s
@@ -383,6 +412,17 @@ async def link_object(obj_id, text, update):
             cur.execute("""
                 UPDATE comments SET object_id = %s WHERE object_id = %s
             """, (obj_id, old_obj_id))
+
+            cur.execute(
+                "UPDATE objects SET score = score + %s WHERE id = %s",
+                (old_score, obj_id)
+            )
+
+            if old_title:
+                cur.execute(
+                    "UPDATE objects SET title = COALESCE(title, %s) WHERE id = %s",
+                    (old_title, obj_id)
+                )
 
             cur.execute("DELETE FROM objects WHERE id = %s", (old_obj_id,))
 
@@ -405,9 +445,9 @@ async def add_tag(update, context):
 
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO tag_voters (user_id, object_id) VALUES (%s,%s) "
+            "INSERT INTO tag_voters (user_id, object_id, tag) VALUES (%s,%s,%s) "
             "ON CONFLICT DO NOTHING",
-            (user_id, obj_id)
+            (user_id, obj_id, tag)
         )
         if cur.rowcount == 0:
             await q.answer("❌ Вы уже добавляли тег", show_alert=True)
@@ -610,6 +650,12 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ================= MAIN =================
 
 def main():
+    if not TOKEN:
+        logging.error("BOT_TOKEN is not set")
+        return
+    if not DATABASE_URL:
+        logging.error("DATABASE_URL is not set")
+        return
     init_db()
     migrate_old_objects()
     app = ApplicationBuilder().token(TOKEN).build()
