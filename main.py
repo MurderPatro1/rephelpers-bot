@@ -19,6 +19,7 @@ from telegram.ext import (
 TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 ADMIN_ID = 6262540190
+ADMIN_PANEL_TEXT = "🔧 Админ-панель"
 
 TAG_EMOJIS = {
     "Бизнес": "💼",
@@ -46,7 +47,10 @@ def get_conn():
 def init_db():
     with get_conn() as conn, conn.cursor() as cur:
         cur.execute("""
-        CREATE TABLE IF NOT EXISTS users (id BIGINT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS users (
+            id BIGINT PRIMARY KEY,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
 
         CREATE TABLE IF NOT EXISTS objects (
             id SERIAL PRIMARY KEY,
@@ -89,6 +93,15 @@ def init_db():
             object_id INT,
             text TEXT
         );
+        """)
+        cur.execute("""
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+        """)
+        cur.execute("""
+        UPDATE users
+        SET created_at = NOW()
+        WHERE created_at IS NULL;
         """)
         cur.execute("""
         ALTER TABLE tag_voters
@@ -247,6 +260,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+
+    # ===== BROADCAST MODE =====
+    if context.user_data.get("broadcast_mode"):
+        if update.effective_user.id != ADMIN_ID:
+            context.user_data.clear()
+            await update.message.reply_text("❌ Недостаточно прав")
+            return
+        context.user_data.clear()
+        await broadcast_message(update, text)
+        return
 
     # ===== COMMENT MODE =====
     if context.user_data.get("comment_mode"):
@@ -635,6 +658,119 @@ async def link_button(update, context):
     await q.edit_message_text("➕ Отправьте данные для связи")
     await q.answer()
 
+async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    await update.message.reply_text(
+        ADMIN_PANEL_TEXT,
+        reply_markup=admin_keyboard()
+    )
+
+def admin_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Статистика", callback_data="admin|stats")],
+        [InlineKeyboardButton("🗓 Статистика по датам", callback_data="admin|daily")],
+        [InlineKeyboardButton("📣 Рассылка", callback_data="admin|broadcast")],
+    ])
+
+async def admin_handler(update, context):
+    q = update.callback_query
+    if q.from_user.id != ADMIN_ID:
+        await q.answer("❌ Недостаточно прав", show_alert=True)
+        return
+
+    _, action = q.data.split("|", 1)
+
+    if action == "stats":
+        await q.answer()
+        await send_stats(q, context)
+        return
+
+    if action == "daily":
+        await q.answer()
+        await send_daily_stats(q, context)
+        return
+
+    if action == "broadcast":
+        context.user_data["broadcast_mode"] = True
+        await q.edit_message_text("📣 Отправьте текст рассылки")
+        await q.answer()
+        return
+
+async def send_stats(query, context):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM users")
+        users = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM objects")
+        objects = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM object_links")
+        links = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM votes")
+        votes = cur.fetchone()[0]
+
+        cur.execute("SELECT COUNT(*) FROM comments")
+        comments = cur.fetchone()[0]
+
+        cur.execute("SELECT COALESCE(SUM(count),0) FROM tags")
+        tags = cur.fetchone()[0]
+
+    await query.edit_message_text(
+        f"📊 Статистика\n\n"
+        f"👤 Пользователей: {users}\n"
+        f"⭐ Объектов: {objects}\n"
+        f"🔗 Связей: {links}\n"
+        f"👍 Голосов: {votes}\n"
+        f"🏷 Тегов: {tags}\n"
+        f"💬 Комментариев: {comments}",
+        reply_markup=admin_keyboard()
+    )
+
+async def send_daily_stats(query, context):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("""
+            SELECT DATE(created_at) AS day, COUNT(*)
+            FROM users
+            GROUP BY day
+            ORDER BY day DESC
+            LIMIT 30
+        """)
+        rows = cur.fetchall()
+
+    if rows:
+        lines = [f"{day}: {count}" for day, count in rows]
+        body = "\n".join(lines)
+    else:
+        body = "Нет данных"
+
+    await query.edit_message_text(
+        f"🗓 Новые пользователи по датам (последние 30 дней):\n\n{body}",
+        reply_markup=admin_keyboard()
+    )
+
+async def broadcast_message(update: Update, text: str):
+    with get_conn() as conn, conn.cursor() as cur:
+        cur.execute("SELECT id FROM users")
+        user_ids = [row[0] for row in cur.fetchall()]
+
+    sent = 0
+    failed = 0
+    for user_id in user_ids:
+        try:
+            await update.get_bot().send_message(chat_id=user_id, text=text)
+            sent += 1
+        except Exception:
+            failed += 1
+
+    await update.message.reply_text(
+        f"📣 Рассылка завершена.\n"
+        f"✅ Отправлено: {sent}\n"
+        f"⚠️ Ошибок: {failed}",
+        reply_markup=admin_keyboard()
+    )
+
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -692,7 +828,9 @@ def main():
     app.add_handler(CallbackQueryHandler(view_comments, pattern="^view"))
     app.add_handler(CallbackQueryHandler(back_handler, pattern="^back"))
     app.add_handler(CallbackQueryHandler(link_button, pattern="^link"))
+    app.add_handler(CallbackQueryHandler(admin_handler, pattern="^admin\\|"))
     app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("admin", admin_cmd))
 
 
 
